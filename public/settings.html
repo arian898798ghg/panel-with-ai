@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تنظیمات - DNS Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/settings.css">
+</head>
+<body data-theme="light" data-color="blue">
+  <div class="header">
+    <div>
+      <h1><i class="fas fa-cog"></i> <span id="tSettingsTitle">تنظیمات</span></h1>
+      <p id="tSettingsDesc">مدیریت تنظیمات پنل</p>
+    </div>
+    <div class="header-btns">
+      <button type="button" class="sbtn" onclick="window.location.href='/dashboard'"><i class="fas fa-arrow-right"></i> <span id="tBack">بازگشت</span></button>
+      <button type="button" class="sbtn" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i> <span id="tLogout">خروج</span></button>
+    </div>
+  </div>
+
+  <div class="card settings-card">
+    <h2><i class="fas fa-sliders-h"></i> <span id="tSettings">تنظیمات پنل</span></h2>
+    
+    <div class="setting-row">
+      <div class="setting-label"><i class="fas fa-language"></i> <div><div id="tLangLabel">زبان</div></div></div>
+      <div class="setting-control">
+        <button type="button" class="opt-btn" id="btnFa" onclick="changeLang('fa')">فارسی</button>
+        <button type="button" class="opt-btn" id="btnEn" onclick="changeLang('en')">English</button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label"><i class="fas fa-palette"></i> <div><div id="tModeLabel">حالت نمایش</div></div></div>
+      <div class="setting-control">
+        <button type="button" class="opt-btn" id="btnLight" onclick="changeMode('light')"><i class="fas fa-sun"></i></button>
+        <button type="button" class="opt-btn" id="btnDark" onclick="changeMode('dark')"><i class="fas fa-moon"></i></button>
+      </div>
+    </div>
+
+    <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+      <div class="setting-label"><i class="fas fa-fill-drip"></i> <div><div id="tColorLabel">تم رنگی</div></div></div>
+      <div class="theme-g">
+        <button type="button" class="theme-b" id="colorBlue" onclick="changeColor('blue')">🔵 آبی</button>
+        <button type="button" class="theme-b" id="colorPurple" onclick="changeColor('purple')">🟣 بنفش</button>
+        <button type="button" class="theme-b" id="colorGreen" onclick="changeColor('green')">🟢 سبز</button>
+        <button type="button" class="theme-b" id="colorRose" onclick="changeColor('rose')">🌹 صورتی</button>
+        <button type="button" class="theme-b" id="colorBrown" onclick="changeColor('brown')">🟤 قهوه‌ای</button>
+        <button type="button" class="theme-b" id="colorRed" onclick="changeColor('red')">🔴 قرمز</button>
+        <button type="button" class="theme-b" id="colorOrange" onclick="changeColor('orange')">🟠 نارنجی</button>
+        <button type="button" class="theme-b" id="colorTeal" onclick="changeColor('teal')">🩵 فیروزه‌ای</button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label"><i class="fas fa-bell"></i> <div><div id="tNotifyLabel">هشدار انقضا (روز)</div></div></div>
+      <div class="setting-control">
+        <input type="number" id="sNotifyDays" class="input" style="max-width:80px;padding:8px;" min="1" max="30" value="5" onchange="saveSetting('notifyBeforeExpire', this.value)">
+      </div>
+    </div>
+
+    <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px;border-bottom:0;">
+      <div class="setting-label"><i class="fas fa-sliders-h"></i> <div><div id="tDefaultLabel">مقادیر پیش‌فرض</div></div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;width:100%;">
+        <div style="flex:1;min-width:70px;"><label style="font-size:11px;color:var(--text2);" id="tDaysLabel">روز</label><input type="number" id="sDefaultDays" class="input" style="padding:8px;" min="1" max="365" value="30" onchange="saveSetting('defaultDays', this.value)"></div>
+        <div style="flex:1;min-width:70px;"><label style="font-size:11px;color:var(--text2);" id="tStorageLabel">حجم (GB)</label><input type="number" id="sDefaultStorage" class="input" style="padding:8px;" min="1" max="1000" value="100" onchange="saveSetting('defaultStorage', this.value)"></div>
+        <div style="flex:1;min-width:70px;"><label style="font-size:11px;color:var(--text2);" id="tUsersLabel">کاربران</label><input type="number" id="sDefaultUsers" class="input" style="padding:8px;" min="1" max="100" value="10" onchange="saveSetting('defaultUsers', this.value)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/settings.js"></script>
+</body>
+</html>

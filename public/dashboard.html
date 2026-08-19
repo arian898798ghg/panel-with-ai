@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>داشبورد - DNS Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body data-theme="light" data-color="blue">
+  <!-- ========== HEADER ========== -->
+  <div class="header">
+    <div>
+      <h1 id="tMainTitle"><i class="fas fa-cloud"></i> پنل مدیریت DNS پیشرفته</h1>
+      <p id="tMainDesc">مدیریت حرفه‌ای پنل‌های DNS</p>
+    </div>
+    <div class="header-btns">
+      <button type="button" class="sbtn" onclick="window.location.href='/ai'"><i class="fas fa-robot"></i> <span id="tAI">هوش مصنوعی</span></button>
+      <button type="button" class="sbtn" onclick="window.location.href='/settings'"><i class="fas fa-cog"></i> <span id="tSettings">تنظیمات</span></button>
+      <button type="button" class="sbtn" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i> <span id="tLogout">خروج</span></button>
+    </div>
+  </div>
+
+  <!-- ========== STATUS BAR ========== -->
+  <div class="status-bar">
+    <div class="st-item"><div class="dot"></div><span id="tApi"><i class="fas fa-check-circle"></i> API متصل است</span></div>
+    <div class="st-item"><div class="dot"></div><span id="tTunnel"><i class="fas fa-shield-alt"></i> تانل برقرار است</span></div>
+    <div class="st-item"><div class="dot"></div><span id="tHost"><i class="fas fa-server"></i> هاست متصل است</span></div>
+  </div>
+
+  <!-- ========== STATS ========== -->
+  <div class="stats">
+    <div class="stat stat-blue"><div class="stat-icon"><i class="fas fa-server"></i></div><div><b id="sTotal">0</b><span id="tTotal">کل پنل‌ها</span></div><div class="stat-trend"><i class="fas fa-arrow-up"></i></div></div>
+    <div class="stat stat-green"><div class="stat-icon"><i class="fas fa-check-circle"></i></div><div><b id="sActive">0</b><span id="tActive">فعال</span></div><div class="stat-trend"><i class="fas fa-arrow-up"></i></div></div>
+    <div class="stat stat-yellow"><div class="stat-icon"><i class="fas fa-hdd"></i></div><div><b id="sStorage">0 GB</b><span id="tStorage">حجم کل</span></div><div class="stat-trend"><i class="fas fa-arrow-up"></i></div></div>
+    <div class="stat stat-purple"><div class="stat-icon"><i class="fas fa-users"></i></div><div><b id="sUsers">0</b><span id="tUsers">کاربران</span></div><div class="stat-trend"><i class="fas fa-arrow-up"></i></div></div>
+  </div>
+
+  <!-- ========== CHARTS ========== -->
+  <div class="charts">
+    <div class="chart-box">
+      <h3><i class="fas fa-chart-line"></i> <span id="tChartLine">نمودار مصرف و فعالیت</span></h3>
+      <div class="chart-h"><canvas id="lineChart"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <h3><i class="fas fa-chart-pie"></i> <span id="tChartPie">وضعیت پنل‌ها</span></h3>
+      <div class="chart-h"><canvas id="pieChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ========== CREATE BUTTON ========== -->
+  <button type="button" class="big-btn" id="btnShowForm" onclick="toggleForm()"><i class="fas fa-plus-circle"></i> <span id="tCreate">ساخت پنل DNS جدید</span></button>
+
+  <!-- ========== FORM ========== -->
+  <div id="formBox" class="card" style="display:none">
+    <h2><i class="fas fa-plus-circle"></i> <span id="tFormTitle">ساخت پنل DNS جدید</span></h2>
+    
+    <div class="help-box">
+      <h4><i class="fas fa-lightbulb"></i> <span id="tHelpTitle">ساخت پنل با DNS اختصاصی برای هر کشور</span></h4>
+      <p id="tHelpText">
+        <span class="highlight">🎮 برای بازی:</span> الکترو، رادار و شکن بهترین گزینه‌ها هستند.<br>
+        <span class="highlight">🌐 برای رفع تحریم:</span> شکن و بگذر مناسب‌ترین انتخاب‌ها هستند.<br>
+        <span class="highlight">🏢 برای اینترنت ایران:</span> شاتل، هاست ایران، پیشگامان، آسیاتک و پارس آنلاین.
+      </p>
+    </div>
+    
+    <div class="form-grid">
+      <div class="field"><label id="tName"><i class="fas fa-tag"></i> نام پنل</label><input type="text" id="fName" class="input" placeholder="مثلاً: پنل آلمان"></div>
+      <div class="field"><label id="tDays"><i class="fas fa-calendar-day"></i> تعداد روز</label><input type="number" id="fDays" class="input" min="1" max="365" value="30"></div>
+      <div class="field"><label id="tStor"><i class="fas fa-hdd"></i> حجم (GB)</label><input type="number" id="fStorage" class="input" min="1" max="1000" value="100"></div>
+      <div class="field"><label id="tUsr"><i class="fas fa-user"></i> تعداد کاربر</label><input type="number" id="fUsers" class="input" min="1" max="100" value="10"></div>
+    </div>
+    
+    <div style="margin-top:14px">
+      <label id="tCountries" style="font-weight:500"><i class="fas fa-globe"></i> انتخاب کشور (فقط یک کشور)</label>
+      <div id="countryGrid" class="country-grid"></div>
+    </div>
+    
+    <div style="margin-top:14px">
+      <label style="font-weight:500"><i class="fas fa-server"></i> <span id="tSelectDNS">انتخاب سرویس Primary DNS</span></label>
+      <div id="dnsServiceGrid" class="dns-service-grid"></div>
+    </div>
+
+    <div id="previewBox" class="country-page-preview" style="display:none;">
+      <div class="cp-title"><i class="fas fa-eye"></i> <span id="tPreview">پیش‌نمایش پنل</span></div>
+      <div class="cp-row"><span class="cp-label" id="tPreviewCountry">کشور:</span> <span class="cp-value" id="previewCountry">-</span></div>
+      <div class="cp-row"><span class="cp-label" id="tPreviewPrimary">Primary DNS:</span> <span class="cp-value" id="previewPrimary">-</span></div>
+      <div class="cp-row"><span class="cp-label" id="tPreviewSecondary">Secondary DNS:</span> <span class="cp-value" id="previewSecondary">-</span></div>
+      <div class="cp-row"><span class="cp-label" id="tPreviewService">سرویس:</span> <span class="cp-value" id="previewService">-</span></div>
+      <div class="cp-row"><span class="cp-label" id="tPreviewSlug">لینک:</span> <span class="cp-value" id="previewSlug">-</span></div>
+    </div>
+    
+    <div id="msgOk" class="msg msg-ok"><i class="fas fa-check-circle"></i> </div>
+    <div id="msgErr" class="msg msg-err"><i class="fas fa-exclamation-circle"></i> </div>
+    <button type="button" class="create-btn" onclick="doCreate()"><i class="fas fa-save"></i> <span id="tCreateBtn">ساخت پنل</span></button>
+  </div>
+
+  <!-- ========== PANELS LIST ========== -->
+  <div class="card">
+    <h2><i class="fas fa-list"></i> <span id="tMyPanels">پنل‌های من</span> <span id="panelCount" class="badge badge-success">0</span></h2>
+    <div class="toolbar">
+      <input type="text" id="search" class="input" style="flex:1" placeholder="جستجو..." oninput="renderPanels()">
+      <select id="filter" class="input" style="max-width:150px" onchange="renderPanels()">
+        <option value="all">همه</option>
+        <option value="active">فعال</option>
+        <option value="inactive">غیرفعال</option>
+        <option value="expiring">در حال انقضا</option>
+      </select>
+      <select id="sortBy" class="input" style="max-width:140px" onchange="renderPanels()">
+        <option value="newest">جدیدترین</option>
+        <option value="oldest">قدیمی‌ترین</option>
+        <option value="name">نام</option>
+        <option value="days">روز باقی‌مانده</option>
+        <option value="storage">حجم</option>
+      </select>
+    </div>
+    <div id="panelsList"></div>
+  </div>
+
+  <!-- ========== MODALS ========== -->
+  <div id="editModal" class="modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3><i class="fas fa-edit"></i> <span id="tEditTitle">ویرایش پنل</span></h3>
+        <button type="button" class="xbtn" onclick="closeEdit()">×</button>
+      </div>
+      <div id="editBody"></div>
+    </div>
+  </div>
+
+  <div id="panelSettingsModal" class="modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3><i class="fas fa-palette"></i> <span id="tPanelSettings">تنظیمات پنل</span></h3>
+        <button type="button" class="xbtn" onclick="closePanelSettings()">×</button>
+      </div>
+      <div id="panelSettingsBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

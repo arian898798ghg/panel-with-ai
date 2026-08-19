@@ -1,0 +1,34 @@
+/* ========== SETTINGS CARD ========== */
+.settings-card {
+  max-width:700px; margin:0 auto;
+}
+.settings-card .setting-row {
+  padding:14px 0;
+}
+.settings-card .setting-row:last-child {
+  border-bottom: none;
+}
+.settings-card .setting-label {
+  flex:1;
+}
+.settings-card .setting-control {
+  flex-shrink:0;
+}
+
+/* ========== THEME GRID ========== */
+.theme-g {
+  display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; width:100%;
+}
+.theme-b {
+  padding:9px; border-radius:8px; border:2px solid var(--border);
+  background:var(--card); cursor:pointer; text-align:center; font-size:11px; color:var(--text);
+  transition:0.2s;
+}
+.theme-b:hover { border-color:var(--accent); }
+.theme-b.active { border-color:var(--accent); background:var(--primary); }
+
+/* ========== RESPONSIVE ========== */
+@media(max-width:500px) {
+  .theme-g { grid-template-columns:repeat(2,1fr); }
+  .setting-row { flex-direction:column; align-items:flex-start; gap:8px; }
+}

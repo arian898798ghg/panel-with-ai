@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ورود - DNS Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-theme="light" data-color="blue">
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="login-logo"><i class="fas fa-server"></i></div>
+      <h1 id="tLoginTitle">پنل مدیریت DNS</h1>
+      <p id="tLoginDesc">برای ورود اطلاعات حساب را وارد کنید</p>
+      <div class="opts">
+        <button type="button" class="opt-btn active" id="btnFa" onclick="changeLang('fa')">فارسی</button>
+        <button type="button" class="opt-btn" id="btnEn" onclick="changeLang('en')">English</button>
+        <button type="button" class="opt-btn" id="btnLight" onclick="changeMode('light')"><i class="fas fa-sun"></i></button>
+        <button type="button" class="opt-btn" id="btnDark" onclick="changeMode('dark')"><i class="fas fa-moon"></i></button>
+      </div>
+      <div class="field">
+        <label id="tUser"><i class="fas fa-user"></i> نام کاربری</label>
+        <input type="text" id="username" class="input" placeholder="نام کاربری" autocomplete="username">
+      </div>
+      <div class="field">
+        <label id="tPass"><i class="fas fa-lock"></i> رمز عبور</label>
+        <input type="password" id="password" class="input" placeholder="رمز عبور" autocomplete="current-password">
+      </div>
+      <button type="button" class="btn-main" id="loginBtn"><i class="fas fa-sign-in-alt"></i> ورود به پنل</button>
+      <div id="loginError" class="error"></div>
+    </div>
+  </div>
+  
+  <script>
+    // ========== SETTINGS ==========
+    var lang = localStorage.getItem('dnsLang') || 'fa';
+    var mode = localStorage.getItem('dnsMode') || 'light';
+    var color = localStorage.getItem('dnsColor') || 'blue';
+
+    function changeLang(l) {
+      lang = l;
+      localStorage.setItem('dnsLang', l);
+      document.documentElement.lang = l;
+      document.documentElement.dir = l === 'fa' ? 'rtl' : 'ltr';
+      document.getElementById('btnFa').classList.toggle('active', l === 'fa');
+      document.getElementById('btnEn').classList.toggle('active', l === 'en');
+      updateTexts();
+    }
+
+    function changeMode(m) {
+      mode = m;
+      localStorage.setItem('dnsMode', m);
+      document.body.setAttribute('data-theme', m);
+      document.getElementById('btnLight').classList.toggle('active', m === 'light');
+      document.getElementById('btnDark').classList.toggle('active', m === 'dark');
+    }
+
+    function changeColor(c) {
+      color = c;
+      localStorage.setItem('dnsColor', c);
+      document.body.setAttribute('data-color', c);
+    }
+
+    function updateTexts() {
+      var isFa = lang === 'fa';
+      document.getElementById('tLoginTitle').textContent = isFa ? 'پنل مدیریت DNS' : 'DNS Management Panel';
+      document.getElementById('tLoginDesc').textContent = isFa ? 'برای ورود اطلاعات حساب را وارد کنید' : 'Enter your credentials to login';
+      document.getElementById('tUser').innerHTML = '<i class="fas fa-user"></i> ' + (isFa ? 'نام کاربری' : 'Username');
+      document.getElementById('tPass').innerHTML = '<i class="fas fa-lock"></i> ' + (isFa ? 'رمز عبور' : 'Password');
+      document.getElementById('loginBtn').innerHTML = '<i class="fas fa-sign-in-alt"></i> ' + (isFa ? 'ورود به پنل' : 'Login');
+      document.getElementById('username').placeholder = isFa ? 'نام کاربری' : 'Username';
+      document.getElementById('password').placeholder = isFa ? 'رمز عبور' : 'Password';
+    }
+
+    // ========== LOGIN ==========
+    document.getElementById('loginBtn').onclick = async function() {
+      var username = document.getElementById('username').value.trim();
+      var password = document.getElementById('password').value.trim();
+      var err = document.getElementById('loginError');
+
+      try {
+        var res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        var data = await res.json();
+        
+        if (data.success) {
+          sessionStorage.setItem('dnsLogged', '1');
+          window.location.href = '/dashboard';
+        } else {
+          err.textContent = lang === 'fa' ? 'نام کاربری یا رمز عبور اشتباه است.' : 'Incorrect username or password.';
+        }
+      } catch(e) {
+        err.textContent = lang === 'fa' ? 'خطا در ارتباط با سرور.' : 'Server connection error.';
+      }
+    };
+
+    document.getElementById('password').onkeydown = function(e) {
+      if (e.key === 'Enter') document.getElementById('loginBtn').click();
+    };
+    document.getElementById('username').onkeydown = function(e) {
+      if (e.key === 'Enter') document.getElementById('password').focus();
+    };
+
+    // ========== INIT ==========
+    changeLang(lang);
+    changeMode(mode);
+    changeColor(color);
+  </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+/* Extra dashboard styles */
+.dns-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:2px 0; border-bottom:1px solid var(--border);
+}
+.dns-row:last-child { border-bottom:0; }
+.dns-row .dns-label { font-size:10px; color:var(--text2); font-weight:600; }
+
+/* Panel URL */
+.panel-url {
+  font-size:11px; direction:ltr; text-align:left;
+  background:var(--primary); padding:4px 8px; border-radius:6px;
+  margin-bottom:8px; display:flex; align-items:center; gap:6px;
+}
+.panel-url a { color:var(--accent); text-decoration:none; flex:1; }
+.panel-url a:hover { text-decoration:underline; }
+
+/* Setting row for panel settings */
+.panel-settings-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px 0; border-bottom:1px solid var(--border);
+}
+.panel-settings-row:last-child { border-bottom:0; }
+.panel-settings-row .label { font-size:12px; color:var(--text2); }
