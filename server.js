@@ -69,7 +69,7 @@ app.get('/api/panel/:slug', (req, res) => {
 });
 
 // ============================================================
-// ========== هوش مصنوعی فوق‌هوشمند ==========
+// ========== هوش مصنوعی ==========
 // ============================================================
 
 app.post('/api/ai/chat', async (req, res) => {
@@ -84,7 +84,6 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 
   try {
-    // ===== اطلاعات کامل پنل‌ها =====
     const panelsInfo = panels.map(p => ({
       name: p.name,
       slug: p.slug,
@@ -97,7 +96,6 @@ app.post('/api/ai/chat', async (req, res) => {
       id: p.id
     }));
 
-    // ===== سیستم پرامپت هوشمند =====
     const systemPrompt = `You are an ALL-POWERFUL AI that controls a DNS panel system.
 
 CURRENT PANELS (${panels.length}):
@@ -140,12 +138,6 @@ ${panelsInfo.length > 0 ? JSON.stringify(panelsInfo, null, 2) : '⚠️ NO PANEL
 - Always confirm with a clear message
 - Be friendly and helpful
 
-EXAMPLE RESPONSES:
-- User: "پنل آلمان رو حذف کن" → Delete panel "آلمان" → "✅ پنل آلمان حذف شد"
-- User: "ساخت پنل جدید با 50 روز و 200 گیگ" → Create panel → "✅ پنل جدید با 50 روز و 200 گیگ ساخته شد"
-- User: "همه پنل‌ها رو پاک کن" → Delete all → "✅ همه ${count} پنل حذف شدند"
-- User: "تم رو قهوه‌ای کن" → Change theme → "✅ تم به قهوه‌ای تغییر کرد"
-
 ALWAYS respond in the SAME language as the user.`;
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -178,10 +170,8 @@ ALWAYS respond in the SAME language as the user.`;
     const reply = data.choices[0].message.content;
     console.log('🤖 AI Reply:', reply);
     
-    // ===== هوشمندانه تشخیص و اجرای دستور =====
     const result = await smartExecute(reply, message);
     
-    // ذخیره تاریخچه
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
     aiHistory.push({ role: 'assistant', content: reply, timestamp: new Date().toISOString() });
     
@@ -211,7 +201,7 @@ async function smartExecute(reply, originalMessage) {
         lower.includes('remove all') || lower.includes('پاک کن همه') ||
         lower.includes('همه پنل') || lower.includes('all panels')) {
       
-      const count = panels.length;
+      const count = panels.length;  // ← اینجا count تعریف شده
       panels = [];
       result.executed = true;
       result.message = `✅ ${count} پنل با موفقیت حذف شدند`;
@@ -222,11 +212,9 @@ async function smartExecute(reply, originalMessage) {
     if (lower.includes('delete') || lower.includes('حذف') || 
         lower.includes('remove') || lower.includes('پاک کن')) {
       
-      // پیدا کردن اسم پنل
       let panelName = extractName(reply) || extractName(originalMessage);
       
       if (!panelName) {
-        // بررسی کلمه بعد از delete/حذف
         const regex = /(?:delete|حذف|remove|پاک\s+کن)\s+(?:panel|پنل)?\s*([^\s,،.]+)/i;
         const match = (reply + ' ' + originalMessage).match(regex);
         if (match) panelName = match[1];
@@ -252,14 +240,12 @@ async function smartExecute(reply, originalMessage) {
         lower.includes('make') || lower.includes('بساز') || 
         lower.includes('جدید') || lower.includes('new')) {
       
-      // استخراج اطلاعات
       const name = extractName(reply) || extractName(originalMessage) || 'پنل جدید';
       const days = extractNumber(reply, ['day', 'روز']) || 30;
       const storage = extractNumber(reply, ['gb', 'گیگ', 'gig']) || 100;
       const users = extractNumber(reply, ['user', 'کاربر']) || 10;
       const country = extractCountry(reply + ' ' + originalMessage) || 'germany';
       
-      // ساخت پنل
       const slug = generateSlug(name);
       const exists = panels.some(p => p.slug === slug);
       const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
@@ -294,7 +280,6 @@ async function smartExecute(reply, originalMessage) {
       
       const color = extractColor(lower);
       if (color) {
-        // تغییر تم همه پنل‌ها یا پنل خاص
         const panelName = extractName(reply) || extractName(originalMessage);
         if (panelName) {
           const panel = findPanel(panelName);
@@ -306,7 +291,6 @@ async function smartExecute(reply, originalMessage) {
             return result;
           }
         } else {
-          // تغییر تم همه پنل‌ها
           panels.forEach(p => {
             if (!p.panelSettings) p.panelSettings = {};
             p.panelSettings.color = color;
@@ -353,7 +337,6 @@ async function smartExecute(reply, originalMessage) {
       if (panelName && amount) {
         const panel = findPanel(panelName);
         if (panel) {
-          // تشخیص کم یا زیاد
           if (lower.includes('کم') || lower.includes('reduce') || lower.includes('minus')) {
             panel.storage = Math.max(0, panel.storage - amount);
           } else if (lower.includes('زیاد') || lower.includes('increase') || lower.includes('plus') || lower.includes('add')) {
@@ -432,7 +415,6 @@ async function smartExecute(reply, originalMessage) {
       return result;
     }
     
-    // ===== 10. اگر هیچ کاری انجام نشد =====
     result.message = '💡 دستور شما انجام شد. اگر نیاز به کاری دارید، بفرمایید.';
     return result;
     
@@ -460,11 +442,9 @@ function findPanel(name) {
 function extractName(text) {
   if (!text) return null;
   
-  // از نقل قول
   const quoteMatch = text.match(/["']([^"']*)["']/);
   if (quoteMatch) return quoteMatch[1];
   
-  // کلمات کلیدی
   const patterns = [
     /(?:panel|پنل)\s+["']([^"']*)["']/i,
     /(?:panel|پنل)\s+([^\s,،.]+)/i,
