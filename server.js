@@ -101,10 +101,10 @@ app.get('/api/panel/:slug', (req, res) => {
 });
 
 // ============================================================
-// ========== هوش مصنوعی نهایی (بدون باگ) ==========
+// ========== هوش مصنوعی (نسخه‌ی جدید - خروجی ساختاریافته) ==========
 // ============================================================
 
-// لیست رنگ‌های موجود
+// لیست رنگ‌های موجود (کلید = مقدار ذخیره‌شده، مقدار = مترادف‌های قابل‌قبول)
 const AVAILABLE_COLORS = {
   'blue': ['blue', 'آبی'],
   'purple': ['purple', 'بنفش'],
@@ -115,26 +115,36 @@ const AVAILABLE_COLORS = {
   'orange': ['orange', 'نارنجی'],
   'teal': ['teal', 'فیروزه ای', 'فیروزه‌ای']
 };
+const VALID_COLOR_KEYS = Object.keys(AVAILABLE_COLORS);
+
+// انواع اکشن‌های مجاز که مدل می‌تونه برگردونه
+const VALID_ACTION_TYPES = [
+  'create_panel', 'delete_panel', 'delete_all',
+  'change_theme', 'change_mode', 'list_panels',
+  'change_storage', 'add_days', null
+];
 
 app.post('/api/ai/chat', async (req, res) => {
   const { message } = req.body;
-  
+
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return res.json({ success: false, message: '❌ پیام خالی است' });
+  }
+
   console.log('📨 پیام کاربر:', message);
-  
-  // گرفتن از متغیرهای محیطی
+
   const apiKey = process.env.AI_API_KEY;
   const baseUrl = process.env.AI_BASE_URL || 'https://api.vivgrid.com/v1';
   const model = process.env.AI_MODEL || 'deepseek-chat';
-  
+
   if (!apiKey) {
-    return res.json({ 
-      success: false, 
-      message: '❌ API Key تنظیم نشده است. لطفاً AI_API_KEY را در .env تنظیم کنید.' 
+    return res.json({
+      success: false,
+      message: '❌ API Key تنظیم نشده است. لطفاً AI_API_KEY را در .env تنظیم کنید.'
     });
   }
 
   try {
-    // ===== اطلاعات کامل پنل‌ها برای AI =====
     const panelsInfo = panels.map(p => ({
       id: p.id,
       name: p.name,
@@ -151,64 +161,44 @@ app.post('/api/ai/chat', async (req, res) => {
 
     console.log(`📋 تعداد پنل‌ها: ${panels.length}`);
 
-    // ===== سیستم پرامپت =====
-    const systemPrompt = `You are a SUPER AI with FULL CONTROL over a DNS management panel.
+    // ===== سیستم پرامپت: مدل باید فقط JSON برگردونه =====
+    // نکته‌ی کلیدی: دیگه هیچ regex/کلمه‌کاوی روی متن پاسخ انجام نمی‌شه.
+    // خودِ مدل باید صراحتاً تصمیم بگیره که اکشنی هست یا نه، و این تصمیم
+    // مستقیماً به صورت فیلد جدا در JSON برمی‌گرده - نه توی متن آزاد.
+    const systemPrompt = `You are an assistant for a DNS panel management dashboard.
 
-📋 CURRENT PANELS (${panels.length} panels):
-${panelsInfo.length > 0 ? JSON.stringify(panelsInfo, null, 2) : '⚠️ No panels exist yet.'}
+📋 CURRENT PANELS (${panels.length}):
+${panelsInfo.length > 0 ? JSON.stringify(panelsInfo, null, 2) : 'No panels exist yet.'}
 
-🎨 AVAILABLE COLORS (only these exist):
-- blue (آبی)
-- purple (بنفش)
-- green (سبز)
-- rose (صورتی)
-- brown (قهوه‌ای)
-- red (قرمز)
-- orange (نارنجی)
-- teal (فیروزه‌ای)
+🎨 AVAILABLE COLORS (ONLY these, nothing else exists):
+${VALID_COLOR_KEYS.join(', ')}
 
-🔧 YOUR POWERS:
+You must respond with ONLY a raw JSON object (no markdown fences, no extra text before/after) matching EXACTLY this shape:
 
-1️⃣ CREATE PANEL:
-   - When user asks to create a panel
-   - Extract: name, days, storage (GB), users
-   - Defaults: name="Panel", days=30, storage=100, users=10
+{
+  "reply": "a short, friendly, human message in the SAME language the user wrote in",
+  "action": null
+}
 
-2️⃣ DELETE PANEL:
-   - When user says "delete", "remove", "حذف", "پاک کن"
-   - Find panel by name
+OR, if — and only if — the user is CLEARLY asking you to perform an operation, set "action" to one of the following (never invent a new type, never guess an action for greetings/small talk/questions):
 
-3️⃣ DELETE ALL:
-   - When user says "delete all", "حذف همه"
+- {"type":"create_panel","data":{"name":"string","days":number,"storage":number,"users":number}}
+- {"type":"delete_panel","data":{"name":"string"}}
+- {"type":"delete_all"}
+- {"type":"change_theme","data":{"color":"one of: ${VALID_COLOR_KEYS.join(', ')}"}}
+- {"type":"change_mode","data":{"mode":"dark"|"light"}}
+- {"type":"list_panels"}
+- {"type":"change_storage","data":{"name":"string","amount":number}}
+- {"type":"add_days","data":{"name":"string","days":number}}
 
-4️⃣ CHANGE THEME:
-   - When user asks to change theme/color
-   - ONLY use colors from AVAILABLE COLORS list
-   - If user asks for a color that doesn't exist, say it doesn't exist and list available colors
+STRICT RULES:
+- A greeting, thank-you, question, or general chat is NEVER an action. "action" must be null in that case.
+- Only set "action" when the user's message itself contains an explicit request to do one of the operations above.
+- If the user asks for a color that is not in AVAILABLE COLORS, do NOT return a change_theme action — instead explain in "reply" that the color doesn't exist and list the available ones, and set "action" to null.
+- Defaults if the user omits details for create_panel: days=30, storage=100, users=10.
+- Output must be valid JSON only. No markdown code fences, no commentary outside the JSON object.
 
-5️⃣ CHANGE MODE:
-   - When user says "dark", "تاریک" → change to dark
-   - When user says "light", "روشن" → change to light
-
-6️⃣ LIST PANELS:
-   - When user asks to list/show panels
-
-7️⃣ CHANGE STORAGE:
-   - When user asks to change storage
-
-8️⃣ ADD DAYS:
-   - When user says "add days", "تمدید", "extend"
-
-🚨 CRITICAL RULES:
-- NEVER show ACTION: commands in your response
-- Your response should ONLY be a friendly, human-like message
-- If user asks for a color not in AVAILABLE COLORS, tell them it doesn't exist and list the available colors
-- Be helpful and friendly
-- ALWAYS respond in the SAME language as the user
-
-User request: "${message}"
-
-Respond in a friendly way and tell the user what you're doing.`;
+User message: "${message}"`;
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -223,270 +213,91 @@ Respond in a friendly way and tell the user what you're doing.`;
           { role: 'user', content: message }
         ],
         temperature: 0.2,
-        max_tokens: 600
+        max_tokens: 600,
+        response_format: { type: 'json_object' } // اگر پروایدر پشتیبانی کنه، دقت رو خیلی بالا می‌بره
       })
     });
 
     const data = await response.json();
     console.log('AI Response Status:', response.status);
-    
+
     if (!response.ok) {
       console.error('AI API Error:', JSON.stringify(data, null, 2));
-      
       let errorMsg = '❌ خطا در ارتباط با هوش مصنوعی';
-      if (data.error?.message) {
-        errorMsg += `: ${data.error.message}`;
-      } else if (data.message) {
-        errorMsg += `: ${data.message}`;
-      }
-      
-      return res.json({ 
-        success: false, 
-        message: errorMsg
-      });
+      if (data.error?.message) errorMsg += `: ${data.error.message}`;
+      else if (data.message) errorMsg += `: ${data.message}`;
+      return res.json({ success: false, message: errorMsg });
     }
-    
+
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       console.error('Unexpected API response:', data);
-      return res.json({ 
-        success: false, 
-        message: '❌ پاسخ غیرمنتظره از API دریافت شد' 
-      });
+      return res.json({ success: false, message: '❌ پاسخ غیرمنتظره از API دریافت شد' });
     }
-    
-    let reply = data.choices[0].message.content;
-    console.log('🤖 پاسخ AI:', reply);
-    
-    // ===== حذف ACTION: از پاسخ =====
-    reply = reply.replace(/ACTION:[^\s]*/g, '').trim();
-    
-    // ===== استخراج و اجرای ACTION =====
-    const action = extractActionFromText(reply + ' ' + message);
+
+    const rawContent = data.choices[0].message.content;
+    console.log('🤖 پاسخ خام AI:', rawContent);
+
+    // ===== پارس کردن JSON (با پاک‌سازی احتمالی fence های مارک‌داون) =====
+    let parsed;
+    try {
+      const cleaned = rawContent.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error('JSON parse error:', parseErr, rawContent);
+      // اگه مدل JSON معتبر برنگردوند، حداقل خود متن رو به‌عنوان پاسخ نشون بده
+      // و هیچ اکشنی اجرا نکن (fail-safe: عدم اجرا، نه اجرای اشتباه)
+      aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+      aiHistory.push({ role: 'assistant', content: rawContent, timestamp: new Date().toISOString() });
+      return res.json({ success: true, message: rawContent, action: null, actionResult: null });
+    }
+
+    const replyText = typeof parsed.reply === 'string' ? parsed.reply : '';
+    let action = parsed.action || null;
+
+    // ===== اعتبارسنجی اکشن سمت سرور (defense in depth - هیچ‌وقت به مدل صرفاً اعتماد نکن) =====
+    if (action) {
+      if (!VALID_ACTION_TYPES.includes(action.type)) {
+        console.warn('⚠️ اکشن نامعتبر از مدل نادیده گرفته شد:', action.type);
+        action = null;
+      } else if (action.type === 'change_theme') {
+        const color = action.data?.color;
+        if (!VALID_COLOR_KEYS.includes(color)) {
+          console.warn('⚠️ رنگ نامعتبر از مدل نادیده گرفته شد:', color);
+          action = null;
+        }
+      }
+    }
+
     let actionResult = null;
-    
     if (action) {
       console.log('⚡ اجرای اکشن:', action);
       actionResult = executeAction(action);
       console.log('📊 نتیجه:', actionResult);
     }
-    
+
     // ===== ساخت پاسخ نهایی =====
-    let finalMessage = reply;
-    
-    // اگر اکشن اجرا شد و نتیجه داشت
+    let finalMessage = replyText || '...';
     if (actionResult) {
-      if (actionResult.success) {
-        // اگه AI خودش جواب درست نداد، از نتیجه استفاده کن
-        if (!reply.includes('✅') && !reply.includes('❌') && !reply.includes('انجام')) {
-          finalMessage = actionResult.message;
-        } else {
-          // ترکیب پاسخ AI و نتیجه
-          finalMessage = reply + '\n\n' + actionResult.message;
-        }
-      } else {
-        finalMessage = actionResult.message;
-      }
+      finalMessage = actionResult.success
+        ? `${replyText}\n\n${actionResult.message}`.trim()
+        : actionResult.message;
     }
-    
-    // ===== بررسی رنگ ناموجود =====
-    const colorCheck = checkInvalidColor(message);
-    if (colorCheck) {
-      finalMessage = colorCheck;
-    }
-    
-    // ===== حذف ACTION های باقی‌مانده =====
-    finalMessage = finalMessage.replace(/ACTION:[^\s]*/g, '').trim();
-    
-    // ذخیره تاریخچه
+
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
     aiHistory.push({ role: 'assistant', content: finalMessage, timestamp: new Date().toISOString() });
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: finalMessage,
       action: action,
       actionResult: actionResult
     });
-    
+
   } catch (error) {
     console.error('AI Error:', error);
-    res.json({ 
-      success: false, 
-      message: `❌ خطا در ارتباط: ${error.message}` 
-    });
+    res.json({ success: false, message: `❌ خطا در ارتباط: ${error.message}` });
   }
 });
-
-// ============================================================
-// ========== بررسی رنگ ناموجود ==========
-// ============================================================
-
-function checkInvalidColor(message) {
-  if (!message) return null;
-  
-  const lower = message.toLowerCase();
-  
-  // اگه ربطی به رنگ نداره
-  if (!lower.includes('رنگ') && !lower.includes('تم') && !lower.includes('color') && !lower.includes('theme')) {
-    return null;
-  }
-  
-  // لیست کلمات معتبر
-  const validWords = ['blue', 'آبی', 'purple', 'بنفش', 'green', 'سبز', 'rose', 'صورتی', 'pink', 
-                      'brown', 'قهوه', 'قهوه ای', 'red', 'قرمز', 'orange', 'نارنجی', 'teal', 'فیروزه'];
-  
-  // کلماتی که ممکنه کاربر بگه ولی معتبر نیستن
-  const invalidColors = ['طیفانی', 'طوسی', 'خاکستری', 'مشکی', 'طلایی', 'نقره ای', 'زرد', 'کرم', 'سفید', 
-                         'طيفانی', 'خاكستری', 'مشکی', 'طلایی', 'نقره‌ای', 'طلایی', 'کرم', 'سفید'];
-  
-  for (const word of invalidColors) {
-    if (lower.includes(word)) {
-      const colorList = '🔵 آبی\n🟣 بنفش\n🟢 سبز\n🌹 صورتی\n🟤 قهوه‌ای\n🔴 قرمز\n🟠 نارنجی\n🩵 فیروزه‌ای';
-      return `❌ رنگ "${word}" وجود ندارد. رنگ‌های موجود:\n${colorList}`;
-    }
-  }
-  
-  // بررسی کلمات دیگه که شاید رنگ باشن ولی معتبر نیستن
-  const words = message.split(/\s+/);
-  for (const word of words) {
-    const clean = word.replace(/[.,،!?]/g, '').toLowerCase();
-    if (clean.length > 2 && !validWords.includes(clean) && !clean.includes('رنگ') && !clean.includes('تم') && !clean.includes('color') && !clean.includes('theme')) {
-      // اگه کلمه شبیه رنگ باشه ولی معتبر نباشه
-      if (clean.includes('ی') || clean.includes('ی') || clean.endsWith('ی')) {
-        const colorList = '🔵 آبی\n🟣 بنفش\n🟢 سبز\n🌹 صورتی\n🟤 قهوه‌ای\n🔴 قرمز\n🟠 نارنجی\n🩵 فیروزه‌ای';
-        return `❌ رنگ "${clean}" وجود ندارد. رنگ‌های موجود:\n${colorList}`;
-      }
-    }
-  }
-  
-  return null;
-}
-
-// ============================================================
-// ========== استخراج ACTION از متن ==========
-// ============================================================
-
-function extractActionFromText(text) {
-  if (!text) return null;
-  
-  const lower = text.toLowerCase();
-  
-  // ===== 1. ساخت پنل =====
-  if (lower.includes('ساخت') || lower.includes('create') || 
-      lower.includes('بساز') || lower.includes('make') ||
-      lower.includes('پنل') || lower.includes('کانفینگ')) {
-    
-    let name = 'پنل جدید';
-    const nameMatch = text.match(/["']([^"']*)["']/);
-    if (nameMatch && nameMatch[1]) name = nameMatch[1];
-    else {
-      const patterns = [
-        /پنل\s+["']?([^\s,،.]+)["']?/i,
-        /با\s+نام\s+["']?([^\s,،.]+)["']?/i,
-        /(?:ساخت|create|بساز|make)\s+["']?([^\s,،.]+)["']?/i
-      ];
-      for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match && match[1]) {
-          name = match[1];
-          break;
-        }
-      }
-    }
-    name = name.replace(/[.,،!?]/g, '').trim();
-    if (!name || name.length < 1) name = 'پنل جدید';
-    
-    const daysMatch = text.match(/(\d+)\s*(?:days?|روز)/i);
-    const days = daysMatch ? parseInt(daysMatch[1]) : 30;
-    
-    const storageMatch = text.match(/(\d+)\s*(?:GB|گیگ|gig)/i);
-    const storage = storageMatch ? parseInt(storageMatch[1]) : 100;
-    
-    const usersMatch = text.match(/(\d+)\s*(?:users?|کاربر)/i);
-    const users = usersMatch ? parseInt(usersMatch[1]) : 10;
-    
-    return { type: 'create_panel', data: { name, days, storage, users } };
-  }
-  
-  // ===== 2. حذف همه =====
-  if (lower.includes('delete all') || lower.includes('حذف همه') || 
-      lower.includes('remove all') || lower.includes('همه پنل')) {
-    return { type: 'delete_all' };
-  }
-  
-  // ===== 3. حذف پنل =====
-  if (lower.includes('delete') || lower.includes('حذف') || 
-      lower.includes('remove') || lower.includes('پاک کن')) {
-    
-    let name = null;
-    const quoteMatch = text.match(/["']([^"']*)["']/);
-    if (quoteMatch && quoteMatch[1]) name = quoteMatch[1];
-    
-    if (!name) {
-      const regex = /(?:delete|حذف|remove|پاک\s+کن)\s+(?:panel|پنل)?\s*["']?([^\s,،.]+)["']?/i;
-      const match = text.match(regex);
-      if (match && match[1]) name = match[1];
-    }
-    
-    if (name) {
-      name = name.replace(/[.,،!?]/g, '').trim();
-      return { type: 'delete_panel', data: { name } };
-    }
-  }
-  
-  // ===== 4. تغییر تم =====
-  if (lower.includes('theme') || lower.includes('تم') || 
-      lower.includes('color') || lower.includes('رنگ')) {
-    
-    // چک کردن رنگ‌های معتبر
-    for (const [color, keywords] of Object.entries(AVAILABLE_COLORS)) {
-      for (const kw of keywords) {
-        if (lower.includes(kw)) {
-          return { type: 'change_theme', data: { color } };
-        }
-      }
-    }
-  }
-  
-  // ===== 5. تغییر حالت =====
-  if (lower.includes('dark') || lower.includes('تاریک')) {
-    return { type: 'change_mode', data: { mode: 'dark' } };
-  }
-  if (lower.includes('light') || lower.includes('روشن')) {
-    return { type: 'change_mode', data: { mode: 'light' } };
-  }
-  
-  // ===== 6. لیست =====
-  if (lower.includes('list') || lower.includes('لیست') || 
-      lower.includes('show') || lower.includes('نمایش')) {
-    return { type: 'list_panels' };
-  }
-  
-  // ===== 7. تغییر حجم =====
-  if (lower.includes('حجم') || lower.includes('storage')) {
-    const nameMatch = text.match(/["']([^"']*)["']/);
-    const name = nameMatch ? nameMatch[1] : null;
-    const amountMatch = text.match(/(\d+)\s*(?:GB|گیگ)/i);
-    const amount = amountMatch ? parseInt(amountMatch[1]) : null;
-    if (name && amount) {
-      return { type: 'change_storage', data: { name, amount } };
-    }
-  }
-  
-  // ===== 8. افزودن روز =====
-  if (lower.includes('تمدید') || lower.includes('add days') || 
-      lower.includes('extend') || lower.includes('روز')) {
-    const nameMatch = text.match(/["']([^"']*)["']/);
-    const name = nameMatch ? nameMatch[1] : null;
-    const daysMatch = text.match(/(\d+)\s*(?:days?|روز)/i);
-    const days = daysMatch ? parseInt(daysMatch[1]) : null;
-    if (name && days) {
-      return { type: 'add_days', data: { name, days } };
-    }
-  }
-  
-  return null;
-}
 
 // ============================================================
 // ========== اجرای ACTION ==========
@@ -494,26 +305,30 @@ function extractActionFromText(text) {
 
 function executeAction(action) {
   if (!action) return { success: false, message: 'اکشن یافت نشد' };
-  
+
   try {
     console.log('🔧 اجرای اکشن:', action.type, action.data || '');
-    
-    switch(action.type) {
+
+    switch (action.type) {
       case 'create_panel': {
-        const { name, days, storage, users } = action.data;
+        const name = (action.data?.name || 'پنل جدید').toString().trim() || 'پنل جدید';
+        const days = Number.isFinite(action.data?.days) ? action.data.days : 30;
+        const storage = Number.isFinite(action.data?.storage) ? action.data.storage : 100;
+        const users = Number.isFinite(action.data?.users) ? action.data.users : 10;
+
         const slug = generateSlug(name);
         const exists = panels.some(p => p.slug === slug);
         const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
-        
+
         const newPanel = {
           id: Date.now(),
-          name: name,
+          name,
           slug: finalSlug,
-          days: days,
+          days,
           remainingDays: days,
-          storage: storage,
+          storage,
           usedStorage: 0,
-          users: users,
+          users,
           countries: ['germany'],
           dns: ['10.202.10.10', '114.114.114.114'],
           dnsService: 'radar',
@@ -522,18 +337,18 @@ function executeAction(action) {
           status: 'active',
           panelSettings: { color: 'blue', mode: 'light', showDns: true, showFlags: true, compact: false }
         };
-        
+
         panels.unshift(newPanel);
-        return { 
-          success: true, 
+        return {
+          success: true,
           message: `✅ پنل "${name}" با ${days} روز، ${storage} گیگ و ${users} کاربر ساخته شد`,
           panel: newPanel
         };
       }
-      
+
       case 'delete_panel': {
-        const name = action.data.name;
-        const panel = panels.find(p => 
+        const name = (action.data?.name || '').toString();
+        const panel = panels.find(p =>
           p.name.toLowerCase() === name.toLowerCase() ||
           p.slug.toLowerCase() === name.toLowerCase() ||
           p.name.toLowerCase().includes(name.toLowerCase())
@@ -545,13 +360,13 @@ function executeAction(action) {
         }
         return { success: false, message: `❌ پنل "${name}" یافت نشد` };
       }
-      
+
       case 'delete_all': {
         const count = panels.length;
         panels = [];
         return { success: true, message: `✅ ${count} پنل با موفقیت حذف شدند` };
       }
-      
+
       case 'change_theme': {
         const color = action.data.color;
         panels.forEach(p => {
@@ -560,9 +375,9 @@ function executeAction(action) {
         });
         return { success: true, message: `✅ تم همه پنل‌ها به "${color}" تغییر کرد` };
       }
-      
+
       case 'change_mode': {
-        const mode = action.data.mode;
+        const mode = action.data?.mode === 'dark' ? 'dark' : 'light';
         const modeName = mode === 'dark' ? 'تاریک' : 'روشن';
         panels.forEach(p => {
           if (!p.panelSettings) p.panelSettings = {};
@@ -570,7 +385,7 @@ function executeAction(action) {
         });
         return { success: true, message: `✅ حالت همه پنل‌ها به "${modeName}" تغییر کرد` };
       }
-      
+
       case 'list_panels': {
         if (panels.length === 0) {
           return { success: true, message: '📭 هیچ پنلی وجود ندارد' };
@@ -578,32 +393,34 @@ function executeAction(action) {
         let list = '📋 لیست پنل‌ها:\n';
         panels.forEach((p, i) => {
           const status = p.status === 'active' ? '✅' : '❌';
-          list += `${i+1}. 📡 ${p.name} ${status} ${p.remainingDays} روز | ${p.storage}GB\n`;
+          list += `${i + 1}. 📡 ${p.name} ${status} ${p.remainingDays} روز | ${p.storage}GB\n`;
         });
         return { success: true, message: list };
       }
-      
+
       case 'change_storage': {
-        const { name, amount } = action.data;
+        const name = (action.data?.name || '').toString();
+        const amount = action.data?.amount;
         const panel = panels.find(p => p.name.toLowerCase() === name.toLowerCase());
-        if (panel) {
+        if (panel && Number.isFinite(amount)) {
           panel.storage = amount;
           return { success: true, message: `✅ حجم پنل "${name}" به ${amount} گیگ تغییر کرد` };
         }
         return { success: false, message: `❌ پنل "${name}" یافت نشد` };
       }
-      
+
       case 'add_days': {
-        const { name, days } = action.data;
+        const name = (action.data?.name || '').toString();
+        const days = action.data?.days;
         const panel = panels.find(p => p.name.toLowerCase() === name.toLowerCase());
-        if (panel) {
+        if (panel && Number.isFinite(days)) {
           panel.remainingDays += days;
           panel.days += days;
           return { success: true, message: `✅ ${days} روز به پنل "${name}" اضافه شد` };
         }
         return { success: false, message: `❌ پنل "${name}" یافت نشد` };
       }
-      
+
       default:
         return { success: false, message: `❌ اکشن ناشناخته: ${action.type}` };
     }
@@ -642,12 +459,12 @@ app.get('/:slug', (req, res) => {
   if (reserved.includes(slug)) {
     return res.redirect('/' + slug);
   }
-  
+
   const panel = panels.find(p => p.slug === slug);
   if (!panel) {
     return res.send('پنل یافت نشد');
   }
-  
+
   res.send(`
     <!DOCTYPE html>
     <html>
