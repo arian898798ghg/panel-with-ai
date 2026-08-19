@@ -69,7 +69,7 @@ app.get('/api/panel/:slug', (req, res) => {
 });
 
 // ============================================================
-// ========== هوش مصنوعی با اجرای مستقیم ==========
+// ========== هوش مصنوعی ==========
 // ============================================================
 
 app.post('/api/ai/chat', async (req, res) => {
@@ -83,7 +83,6 @@ app.post('/api/ai/chat', async (req, res) => {
   if (directResult.executed) {
     console.log('✅ اجرای مستقیم:', directResult.message);
     
-    // ذخیره تاریخچه
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
     aiHistory.push({ role: 'assistant', content: directResult.message, timestamp: new Date().toISOString() });
     
@@ -101,7 +100,7 @@ app.post('/api/ai/chat', async (req, res) => {
   const model = process.env.AI_MODEL || 'deepseek-chat';
   
   if (!apiKey) {
-    return res.json({ success: false, message: '❌ API Key تنظیم نشده و دستور قابل تشخیص نبود' });
+    return res.json({ success: false, message: '❌ API Key تنظیم نشده' });
   }
 
   try {
@@ -151,7 +150,6 @@ ONLY return the command format, nothing else.`;
     const reply = data.choices[0].message.content;
     console.log('🤖 پاسخ API:', reply);
     
-    // ===== اجرای دستور از روی پاسخ API =====
     const apiResult = await executeCommandFromReply(reply);
     
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
@@ -174,6 +172,10 @@ ONLY return the command format, nothing else.`;
 // ============================================================
 
 async function executeDirectCommand(message) {
+  if (!message) {
+    return { executed: false, message: 'پیام خالی است' };
+  }
+  
   const lower = message.toLowerCase();
   const result = { executed: false, message: '' };
   
@@ -198,7 +200,6 @@ async function executeDirectCommand(message) {
       lower.includes('remove') || lower.includes('پاک کن') ||
       lower.includes('پاکش کن') || lower.includes('بردار')) {
     
-    // استخراج اسم پنل
     let panelName = null;
     
     // از نقل قول
@@ -209,25 +210,37 @@ async function executeDirectCommand(message) {
     if (!panelName) {
       const regex = /(?:delete|حذف|remove|پاک\s+کن|بردار)\s+(?:panel|پنل|کانفینگ|کانفیگ)?\s*["']?([^\s,،.]+)["']?/i;
       const match = message.match(regex);
-      if (match) panelName = match[1];
+      if (match && match[1]) panelName = match[1];
     }
     
-    // اگر بازم پیدا نشد، آخرین کلمه رو بگیر
+    // اگر بازم پیدا نشد، آخرین کلمه رو بگیر (به شرطی که کلمه کلیدی نباشه)
     if (!panelName) {
       const words = message.split(/\s+/);
-      panelName = words[words.length - 1];
+      const lastWord = words[words.length - 1];
+      // چک کن که کلمه کلیدی نباشه
+      const keywords = ['delete', 'حذف', 'remove', 'پاک', 'کن', 'بردار', 'panel', 'پنل', 'کانفینگ', 'کانفیگ'];
+      if (lastWord && !keywords.includes(lastWord.toLowerCase())) {
+        panelName = lastWord;
+      }
+    }
+    
+    // حذف کاراکترهای اضافی
+    if (panelName) {
+      panelName = panelName.replace(/[.,،!?]/g, '').trim();
     }
     
     console.log('🔍 اسم پنل برای حذف:', panelName);
     
-    if (panelName) {
+    if (panelName && panels.length > 0) {
       // پیدا کردن پنل
-      const panel = panels.find(p => 
-        p.name.toLowerCase() === panelName.toLowerCase() ||
-        p.slug.toLowerCase() === panelName.toLowerCase() ||
-        p.name.toLowerCase().includes(panelName.toLowerCase()) ||
-        p.slug.toLowerCase().includes(panelName.toLowerCase())
-      );
+      const panel = panels.find(p => {
+        if (!p || !p.name) return false;
+        const pName = p.name.toLowerCase();
+        const searchName = panelName.toLowerCase();
+        return pName === searchName ||
+               pName.includes(searchName) ||
+               searchName.includes(pName);
+      });
       
       if (panel) {
         const name = panel.name;
@@ -243,6 +256,10 @@ async function executeDirectCommand(message) {
         result.type = 'error';
         return result;
       }
+    } else if (panelName && panels.length === 0) {
+      result.executed = true;
+      result.message = '📭 هیچ پنلی برای حذف وجود ندارد';
+      return result;
     }
   }
   
@@ -252,7 +269,6 @@ async function executeDirectCommand(message) {
       lower.includes('جدید') || lower.includes('new') ||
       lower.includes('کانفینگ') || lower.includes('کانفیگ')) {
     
-    // استخراج اسم
     let name = 'پنل جدید';
     const nameMatch = message.match(/["']([^"']*)["']/);
     if (nameMatch) name = nameMatch[1];
@@ -260,25 +276,24 @@ async function executeDirectCommand(message) {
     if (!nameMatch) {
       const nameRegex = /(?:create|ساخت|make|بساز|کانفینگ|کانفیگ)\s+(?:panel|پنل)?\s*["']?([^\s,،]+)["']?/i;
       const nMatch = message.match(nameRegex);
-      if (nMatch) name = nMatch[1];
+      if (nMatch && nMatch[1]) name = nMatch[1];
     }
     
-    // استخراج روز
+    // پاک کردن کاراکترهای اضافی
+    name = name.replace(/[.,،!?]/g, '').trim();
+    
     let days = 30;
     const daysMatch = message.match(/(\d+)\s*(?:days?|روز)/i);
     if (daysMatch) days = parseInt(daysMatch[1]);
     
-    // استخراج حجم
     let storage = 100;
     const storageMatch = message.match(/(\d+)\s*(?:GB|گیگ|gig)/i);
     if (storageMatch) storage = parseInt(storageMatch[1]);
     
-    // استخراج کاربران
     let users = 10;
     const usersMatch = message.match(/(\d+)\s*(?:users?|کاربر)/i);
     if (usersMatch) users = parseInt(usersMatch[1]);
     
-    // کشور
     let country = 'germany';
     const countryMap = {
       'آلمان': 'germany', 'germany': 'germany',
@@ -297,7 +312,6 @@ async function executeDirectCommand(message) {
     
     console.log('📦 ساخت پنل:', { name, days, storage, users, country });
     
-    // ساخت پنل
     const slug = generateSlug(name);
     const exists = panels.some(p => p.slug === slug);
     const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
@@ -388,6 +402,11 @@ async function executeDirectCommand(message) {
 async function executeCommandFromReply(reply) {
   const result = { executed: false, message: '' };
   
+  if (!reply) {
+    result.message = 'پاسخ خالی است';
+    return result;
+  }
+  
   // DELETE_ALL
   if (reply.includes('DELETE_ALL')) {
     const count = panels.length;
@@ -399,7 +418,7 @@ async function executeCommandFromReply(reply) {
   
   // DELETE_PANEL:[name]
   const deleteMatch = reply.match(/DELETE_PANEL:([^:]+)/);
-  if (deleteMatch) {
+  if (deleteMatch && deleteMatch[1]) {
     const name = deleteMatch[1].trim();
     const panel = panels.find(p => 
       p.name.toLowerCase() === name.toLowerCase() ||
@@ -468,7 +487,7 @@ async function executeCommandFromReply(reply) {
   
   // CHANGE_THEME:[color]
   const themeMatch = reply.match(/CHANGE_THEME:([^:]+)/);
-  if (themeMatch) {
+  if (themeMatch && themeMatch[1]) {
     const color = themeMatch[1].trim();
     panels.forEach(p => {
       if (!p.panelSettings) p.panelSettings = {};
@@ -500,6 +519,8 @@ function getCountryName(key) {
 }
 
 function extractColor(text) {
+  if (!text) return null;
+  
   const colors = {
     'blue': ['blue', 'آبی'],
     'purple': ['purple', 'بنفش'],
@@ -522,6 +543,7 @@ function extractColor(text) {
 }
 
 function generateSlug(name) {
+  if (!name) return 'panel-' + Date.now();
   return name.toLowerCase()
     .replace(/[^a-z0-9\u0600-\u06FF]/g, '-')
     .replace(/-+/g, '-')
