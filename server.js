@@ -69,12 +69,28 @@ app.get('/api/panel/:slug', (req, res) => {
 });
 
 // ============================================================
-// ========== هوش مصنوعی (با API) ==========
+// ========== هوش مصنوعی (API + اجرای مستقیم) ==========
 // ============================================================
 
 app.post('/api/ai/chat', async (req, res) => {
   const { message } = req.body;
   
+  console.log('📨 پیام کاربر:', message);
+  
+  // ===== اول خودمون دستور رو بررسی می‌کنیم =====
+  const directResult = checkAndExecute(message);
+  if (directResult.executed) {
+    console.log('✅ اجرای مستقیم:', directResult.message);
+    aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+    aiHistory.push({ role: 'assistant', content: directResult.message, timestamp: new Date().toISOString() });
+    return res.json({
+      success: true,
+      message: directResult.message,
+      result: directResult
+    });
+  }
+  
+  // ===== اگر خودمون نتونستیم، از API استفاده کن =====
   const apiKey = process.env.AI_API_KEY;
   const baseUrl = process.env.AI_BASE_URL || 'https://api.vivgrid.com/v1';
   const model = process.env.AI_MODEL || 'deepseek-chat';
@@ -82,7 +98,7 @@ app.post('/api/ai/chat', async (req, res) => {
   if (!apiKey) {
     return res.json({ 
       success: false, 
-      message: '❌ API Key تنظیم نشده است. لطفاً AI_API_KEY را در متغیرهای محیطی تنظیم کنید.' 
+      message: '❌ API Key تنظیم نشده است' 
     });
   }
 
@@ -92,58 +108,41 @@ app.post('/api/ai/chat', async (req, res) => {
       days: p.remainingDays,
       storage: p.storage,
       users: p.users,
-      status: p.status,
-      slug: p.slug
+      status: p.status
     }));
 
-    const systemPrompt = `You are a SUPER ADMIN AI assistant for a DNS management panel.
+    const systemPrompt = `You are an AI assistant for a DNS panel.
+Current panels: ${panelsInfo.length > 0 ? JSON.stringify(panelsInfo) : 'None'}
 
-📋 CURRENT PANELS (${panels.length} panels):
-${panelsInfo.length > 0 ? JSON.stringify(panelsInfo, null, 2) : '⚠️ No panels created yet.'}
+🔧 YOUR JOB: Parse the user's request and return ONLY ONE of these commands:
 
-🔧 YOUR CAPABILITIES - YOU HAVE FULL ACCESS:
+COMMANDS:
+1. CREATE: "CREATE:name:days:storage:users"
+   Example: "CREATE:ایران:30:100:10"
 
-1. CREATE PANEL:
-   - Command: "create panel [name] with [X] days, [Y] GB, [Z] users"
-   - Example: "create panel Germany with 30 days, 100 GB, 10 users"
-   - Default: name="Panel", days=30, storage=100, users=10
+2. DELETE: "DELETE:name"
+   Example: "DELETE:ایران"
 
-2. DELETE PANEL:
-   - Command: "delete [panel_name]" or "remove [panel_name]"
-   - Command: "delete all" or "delete all panels"
+3. DELETE_ALL: "DELETE_ALL"
 
-3. EDIT PANEL:
-   - Storage: "change storage of [name] to [X] GB"
-   - Days: "add [X] days to [name]" or "extend [name] by [X] days"
-   - Users: "change users of [name] to [X]"
-   - Status: "activate [name]" or "deactivate [name]"
+4. THEME: "THEME:color"
+   Example: "THEME:brown"
 
-4. CHANGE THEME:
-   - "change theme to [color]" where color: blue, purple, green, rose, brown, red, orange, teal
+5. MODE: "MODE:dark" or "MODE:light"
 
-5. CHANGE MODE:
-   - "change mode to dark" or "change mode to light"
+6. LIST: "LIST"
 
-6. LIST PANELS:
-   - "list panels" or "show panels"
+7. HELP: "HELP"
 
-7. VIEW DETAILS:
-   - "details of [name]" or "show [name] details"
+IMPORTANT: 
+- Extract the panel name from user's message
+- Extract days, storage, users from user's message
+- Return ONLY the command, nothing else
+- For CREATE, use the exact name user said
 
-🚨 IMPORTANT RULES:
-- You MUST execute what the user asks
-- If user says "delete", DELETE it
-- If user says "create", CREATE it
-- Always confirm with a clear message
-- Be friendly and helpful
-- ALWAYS respond in the SAME language as the user
+User request: "${message}"
 
-💡 SUGGESTIONS:
-- If user asks about best DNS for gaming → suggest: Electro, Radar, Shecan
-- If user asks about bypass → suggest: Shecan, Begzar
-- If user asks about Iran ISPs → suggest: Shatel, HostIran, Pishgaman, Asiatech, ParsOnline
-
-Now respond to the user's request.`;
+Return ONLY the command:`;
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -157,8 +156,8 @@ Now respond to the user's request.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
         ],
-        temperature: 0.3,
-        max_tokens: 600
+        temperature: 0.1,
+        max_tokens: 100
       })
     });
 
@@ -168,35 +167,46 @@ Now respond to the user's request.`;
       console.error('❌ API Error:', data);
       return res.json({ 
         success: false, 
-        message: `❌ خطا در API: ${data.error?.message || 'Unknown error'}` 
+        message: `❌ خطا در API: ${data.error?.message || 'Unknown'}` 
       });
     }
     
-    const reply = data.choices?.[0]?.message?.content || '⚠️ پاسخی دریافت نشد.';
+    const reply = data.choices?.[0]?.message?.content || '';
     console.log('🤖 پاسخ API:', reply);
     
     // ===== اجرای دستور از روی پاسخ API =====
-    const action = parseAction(reply);
-    let actionResult = null;
+    const result = executeFromAPI(reply);
     
-    if (action) {
-      actionResult = executeAction(action);
-      console.log('⚡ نتیجه اجرا:', actionResult);
+    // اگه API نتونست، خودمون دوباره امتحان می‌کنیم
+    if (!result.executed) {
+      const fallback = checkAndExecute(message);
+      if (fallback.executed) {
+        aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+        aiHistory.push({ role: 'assistant', content: fallback.message, timestamp: new Date().toISOString() });
+        return res.json({ success: true, message: fallback.message, result: fallback });
+      }
     }
     
-    // ذخیره تاریخچه
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
-    aiHistory.push({ role: 'assistant', content: reply, timestamp: new Date().toISOString() });
+    aiHistory.push({ role: 'assistant', content: result.message || reply, timestamp: new Date().toISOString() });
     
     res.json({
       success: true,
-      message: reply,
-      action: action,
-      actionResult: actionResult
+      message: result.message || reply,
+      result: result
     });
     
   } catch (error) {
     console.error('❌ Error:', error);
+    
+    // در صورت خطا، خودمون امتحان می‌کنیم
+    const fallback = checkAndExecute(message);
+    if (fallback.executed) {
+      aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+      aiHistory.push({ role: 'assistant', content: fallback.message, timestamp: new Date().toISOString() });
+      return res.json({ success: true, message: fallback.message, result: fallback });
+    }
+    
     res.json({ 
       success: false, 
       message: `❌ خطا: ${error.message}` 
@@ -205,197 +215,301 @@ Now respond to the user's request.`;
 });
 
 // ============================================================
-// ========== Parse Action ==========
+// ========== بررسی و اجرای مستقیم دستورات ==========
 // ============================================================
 
-function parseAction(reply) {
-  if (!reply) return null;
-  
-  const lower = reply.toLowerCase();
-  
-  // DELETE ALL
-  if (lower.includes('delete all') || lower.includes('حذف همه') || 
-      lower.includes('remove all') || lower.includes('پاک کن همه') ||
-      lower.includes('همه پنل')) {
-    return { type: 'delete_all' };
+function checkAndExecute(message) {
+  if (!message || message.trim() === '') {
+    return { executed: false };
   }
   
-  // DELETE SPECIFIC
-  if (lower.includes('delete') || lower.includes('حذف') || 
-      lower.includes('remove') || lower.includes('پاک کن')) {
+  const lower = message.toLowerCase().trim();
+  const result = { executed: false, message: '' };
+  
+  // ===== 1. ساخت پنل =====
+  if (lower.includes('ساخت') || lower.includes('create') || 
+      lower.includes('بساز') || lower.includes('make') ||
+      lower.includes('پنل') || lower.includes('کانفینگ')) {
+    
+    // استخراج اسم
+    let name = 'پنل جدید';
+    const nameMatch = message.match(/["']([^"']*)["']/);
+    if (nameMatch && nameMatch[1]) {
+      name = nameMatch[1];
+    } else {
+      // اسم بعد از "ساخت" یا "پنل"
+      const patterns = [
+        /ساخت\s+(?:پنل|کانفینگ)?\s*["']?([^\s,،.]+)["']?/i,
+        /پنل\s+["']?([^\s,،.]+)["']?/i,
+        /با\s+نام\s+["']?([^\s,،.]+)["']?/i
+      ];
+      for (const pattern of patterns) {
+        const match = message.match(pattern);
+        if (match && match[1]) {
+          name = match[1];
+          break;
+        }
+      }
+    }
+    name = name.replace(/[.,،!?]/g, '').trim();
+    
+    // استخراج روز
+    let days = 30;
+    const daysMatch = message.match(/(\d+)\s*(?:days?|روز)/i);
+    if (daysMatch) days = parseInt(daysMatch[1]);
+    
+    // استخراج حجم
+    let storage = 100;
+    const storageMatch = message.match(/(\d+)\s*(?:GB|گیگ|gig)/i);
+    if (storageMatch) storage = parseInt(storageMatch[1]);
+    
+    // استخراج کاربران
+    let users = 10;
+    const usersMatch = message.match(/(\d+)\s*(?:users?|کاربر)/i);
+    if (usersMatch) users = parseInt(usersMatch[1]);
+    
+    console.log('📦 ساخت پنل:', { name, days, storage, users });
+    
+    // ساخت پنل
+    const slug = generateSlug(name);
+    const exists = panels.some(p => p.slug === slug);
+    const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
+    
+    const newPanel = {
+      id: Date.now(),
+      name: name,
+      slug: finalSlug,
+      days: days,
+      remainingDays: days,
+      storage: storage,
+      usedStorage: 0,
+      users: users,
+      countries: ['germany'],
+      dns: ['10.202.10.10', '114.114.114.114'],
+      dnsService: 'radar',
+      dnsServiceName: 'رادار',
+      countryName: 'آلمان',
+      status: 'active',
+      panelSettings: { color: 'blue', mode: 'light', showDns: true, showFlags: true, compact: false }
+    };
+    
+    panels.unshift(newPanel);
+    result.executed = true;
+    result.message = `✅ پنل "${name}" با ${days} روز، ${storage} گیگ و ${users} کاربر ساخته شد`;
+    result.type = 'create_panel';
+    result.panel = newPanel;
+    return result;
+  }
+  
+  // ===== 2. حذف پنل =====
+  if (lower.includes('حذف') || lower.includes('delete') || 
+      lower.includes('پاک کن') || lower.includes('remove')) {
     
     let name = null;
-    const match = reply.match(/["']([^"']*)["']/);
-    if (match) name = match[1];
+    const nameMatch = message.match(/["']([^"']*)["']/);
+    if (nameMatch && nameMatch[1]) name = nameMatch[1];
     
     if (!name) {
-      const regex = /(?:delete|حذف|remove|پاک\s+کن)\s+(?:panel|پنل)?\s*["']?([^\s,،.]+)["']?/i;
-      const m = reply.match(regex);
-      if (m) name = m[1];
+      const regex = /(?:حذف|delete|پاک\s+کن|remove)\s+(?:پنل|panel)?\s*["']?([^\s,،.]+)["']?/i;
+      const match = message.match(regex);
+      if (match && match[1]) name = match[1];
     }
     
     if (name) {
-      return { type: 'delete_panel', data: { name: name.trim() } };
-    }
-  }
-  
-  // CREATE PANEL
-  if (lower.includes('create') || lower.includes('ساخت') || 
-      lower.includes('make') || lower.includes('بساز') || 
-      lower.includes('new') || lower.includes('جدید')) {
-    
-    let name = 'پنل جدید';
-    let days = 30;
-    let storage = 100;
-    let users = 10;
-    
-    const nameMatch = reply.match(/["']([^"']*)["']/);
-    if (nameMatch) name = nameMatch[1];
-    
-    if (!nameMatch) {
-      const regex = /(?:create|ساخت|make|بساز)\s+(?:panel|پنل)?\s*["']?([^\s,،.]+)["']?/i;
-      const m = reply.match(regex);
-      if (m) name = m[1];
-    }
-    
-    const daysMatch = reply.match(/(\d+)\s*(?:days?|روز)/i);
-    if (daysMatch) days = parseInt(daysMatch[1]);
-    
-    const storageMatch = reply.match(/(\d+)\s*(?:GB|گیگ|gig)/i);
-    if (storageMatch) storage = parseInt(storageMatch[1]);
-    
-    const usersMatch = reply.match(/(\d+)\s*(?:users?|کاربر)/i);
-    if (usersMatch) users = parseInt(usersMatch[1]);
-    
-    return { 
-      type: 'create_panel', 
-      data: { name: name.trim(), days, storage, users } 
-    };
-  }
-  
-  // CHANGE THEME
-  if (lower.includes('theme') || lower.includes('تم') || 
-      lower.includes('color') || lower.includes('رنگ')) {
-    
-    const colors = {
-      'blue': ['blue', 'آبی'],
-      'purple': ['purple', 'بنفش'],
-      'green': ['green', 'سبز'],
-      'rose': ['rose', 'صورتی', 'pink'],
-      'brown': ['brown', 'قهوه ای', 'قهوه‌ای'],
-      'red': ['red', 'قرمز'],
-      'orange': ['orange', 'نارنجی'],
-      'teal': ['teal', 'فیروزه ای', 'فیروزه‌ای']
-    };
-    
-    for (const [color, keywords] of Object.entries(colors)) {
-      for (const kw of keywords) {
-        if (lower.includes(kw)) {
-          return { type: 'change_theme', data: { color } };
-        }
+      name = name.replace(/[.,،!?]/g, '').trim();
+      const panel = panels.find(p => 
+        p.name.toLowerCase() === name.toLowerCase() ||
+        p.slug.toLowerCase() === name.toLowerCase() ||
+        p.name.toLowerCase().includes(name.toLowerCase())
+      );
+      
+      if (panel) {
+        const panelName = panel.name;
+        panels = panels.filter(p => p.id !== panel.id);
+        result.executed = true;
+        result.message = `✅ پنل "${panelName}" با موفقیت حذف شد`;
+        result.type = 'delete_panel';
+        return result;
+      } else {
+        result.executed = true;
+        result.message = `❌ پنل "${name}" یافت نشد`;
+        result.type = 'error';
+        return result;
       }
     }
   }
   
-  // CHANGE MODE
-  if (lower.includes('dark') || lower.includes('تاریک')) {
-    return { type: 'change_mode', data: { mode: 'dark' } };
-  }
-  if (lower.includes('light') || lower.includes('روشن')) {
-    return { type: 'change_mode', data: { mode: 'light' } };
+  // ===== 3. حذف همه =====
+  if (lower.includes('همه') && (lower.includes('حذف') || lower.includes('پاک'))) {
+    const count = panels.length;
+    panels = [];
+    result.executed = true;
+    result.message = `✅ ${count} پنل با موفقیت حذف شدند`;
+    result.type = 'delete_all';
+    return result;
   }
   
-  return null;
+  // ===== 4. لیست =====
+  if (lower.includes('لیست') || lower.includes('نمایش') || 
+      lower.includes('list') || lower.includes('show')) {
+    if (panels.length === 0) {
+      result.executed = true;
+      result.message = '📭 هیچ پنلی وجود ندارد';
+    } else {
+      let list = '📋 لیست پنل‌ها:\n';
+      panels.forEach((p, i) => {
+        const status = p.status === 'active' ? '✅' : '❌';
+        list += `${i+1}. 📡 ${p.name} ${status} ${p.remainingDays} روز | ${p.storage}GB\n`;
+      });
+      result.executed = true;
+      result.message = list;
+      result.type = 'list';
+    }
+    return result;
+  }
+  
+  return { executed: false };
 }
 
 // ============================================================
-// ========== Execute Action ==========
+// ========== اجرای دستور از API ==========
 // ============================================================
 
-function executeAction(action) {
-  if (!action) return null;
+function executeFromAPI(command) {
+  const result = { executed: false, message: '' };
   
-  try {
-    switch(action.type) {
-      case 'delete_all': {
-        const count = panels.length;
-        panels = [];
-        return { success: true, message: `✅ ${count} پنل با موفقیت حذف شدند` };
-      }
-      
-      case 'delete_panel': {
-        const name = action.data.name;
-        const panel = panels.find(p => 
-          p.name.toLowerCase() === name.toLowerCase() || 
-          p.slug.toLowerCase() === name.toLowerCase() ||
-          p.name.toLowerCase().includes(name.toLowerCase())
-        );
-        if (panel) {
-          const panelName = panel.name;
-          panels = panels.filter(p => p.id !== panel.id);
-          return { success: true, message: `✅ پنل "${panelName}" با موفقیت حذف شد` };
-        } else {
-          return { success: false, message: `❌ پنل "${name}" یافت نشد` };
-        }
-      }
-      
-      case 'create_panel': {
-        const { name, days, storage, users } = action.data;
-        const slug = generateSlug(name);
-        const exists = panels.some(p => p.slug === slug);
-        const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
-        
-        const newPanel = {
-          id: Date.now(),
-          name: name,
-          slug: finalSlug,
-          days: days,
-          remainingDays: days,
-          storage: storage,
-          usedStorage: 0,
-          users: users,
-          countries: ['germany'],
-          dns: ['10.202.10.10', '114.114.114.114'],
-          dnsService: 'radar',
-          dnsServiceName: 'رادار',
-          countryName: 'آلمان',
-          status: 'active',
-          panelSettings: { color: 'blue', mode: 'light', showDns: true, showFlags: true, compact: false }
-        };
-        
-        panels.unshift(newPanel);
-        return { 
-          success: true, 
-          message: `✅ پنل "${name}" با ${days} روز، ${storage} گیگ و ${users} کاربر ساخته شد`,
-          panel: newPanel
-        };
-      }
-      
-      case 'change_theme': {
-        const color = action.data.color;
-        panels.forEach(p => {
-          if (!p.panelSettings) p.panelSettings = {};
-          p.panelSettings.color = color;
-        });
-        return { success: true, message: `✅ تم همه پنل‌ها به "${color}" تغییر کرد` };
-      }
-      
-      case 'change_mode': {
-        const mode = action.data.mode;
-        const modeName = mode === 'dark' ? 'تاریک' : 'روشن';
-        panels.forEach(p => {
-          if (!p.panelSettings) p.panelSettings = {};
-          p.panelSettings.mode = mode;
-        });
-        return { success: true, message: `✅ حالت همه پنل‌ها به "${modeName}" تغییر کرد` };
-      }
-      
-      default:
-        return { success: false, message: '❌ دستور ناشناخته' };
-    }
-  } catch (error) {
-    return { success: false, message: `❌ خطا: ${error.message}` };
+  if (!command || command.trim() === '') {
+    result.message = '⚠️ پاسخی از API دریافت نشد';
+    return result;
   }
+  
+  console.log('🔧 اجرای دستور از API:', command);
+  
+  // CREATE:name:days:storage:users
+  if (command.startsWith('CREATE:')) {
+    const parts = command.split(':');
+    if (parts.length >= 5) {
+      const name = parts[1] || 'پنل جدید';
+      const days = parseInt(parts[2]) || 30;
+      const storage = parseInt(parts[3]) || 100;
+      const users = parseInt(parts[4]) || 10;
+      
+      const slug = generateSlug(name);
+      const exists = panels.some(p => p.slug === slug);
+      const finalSlug = exists ? slug + '-' + Date.now().toString().slice(-4) : slug;
+      
+      const newPanel = {
+        id: Date.now(),
+        name: name,
+        slug: finalSlug,
+        days: days,
+        remainingDays: days,
+        storage: storage,
+        usedStorage: 0,
+        users: users,
+        countries: ['germany'],
+        dns: ['10.202.10.10', '114.114.114.114'],
+        dnsService: 'radar',
+        dnsServiceName: 'رادار',
+        countryName: 'آلمان',
+        status: 'active',
+        panelSettings: { color: 'blue', mode: 'light', showDns: true, showFlags: true, compact: false }
+      };
+      
+      panels.unshift(newPanel);
+      result.executed = true;
+      result.message = `✅ پنل "${name}" با ${days} روز، ${storage} گیگ و ${users} کاربر ساخته شد`;
+      result.type = 'create_panel';
+      return result;
+    }
+  }
+  
+  // DELETE:name
+  if (command.startsWith('DELETE:')) {
+    const name = command.split(':')[1];
+    if (name) {
+      const panel = panels.find(p => 
+        p.name.toLowerCase() === name.toLowerCase() ||
+        p.slug.toLowerCase() === name.toLowerCase() ||
+        p.name.toLowerCase().includes(name.toLowerCase())
+      );
+      if (panel) {
+        const panelName = panel.name;
+        panels = panels.filter(p => p.id !== panel.id);
+        result.executed = true;
+        result.message = `✅ پنل "${panelName}" با موفقیت حذف شد`;
+        result.type = 'delete_panel';
+        return result;
+      } else {
+        result.executed = true;
+        result.message = `❌ پنل "${name}" یافت نشد`;
+        result.type = 'error';
+        return result;
+      }
+    }
+  }
+  
+  // DELETE_ALL
+  if (command.includes('DELETE_ALL')) {
+    const count = panels.length;
+    panels = [];
+    result.executed = true;
+    result.message = `✅ ${count} پنل با موفقیت حذف شدند`;
+    result.type = 'delete_all';
+    return result;
+  }
+  
+  // THEME:color
+  if (command.startsWith('THEME:')) {
+    const color = command.split(':')[1];
+    if (color) {
+      panels.forEach(p => {
+        if (!p.panelSettings) p.panelSettings = {};
+        p.panelSettings.color = color;
+      });
+      result.executed = true;
+      result.message = `✅ تم همه پنل‌ها به "${color}" تغییر کرد`;
+      result.type = 'theme';
+      return result;
+    }
+  }
+  
+  // MODE:dark / MODE:light
+  if (command.startsWith('MODE:')) {
+    const mode = command.split(':')[1];
+    if (mode === 'dark' || mode === 'light') {
+      const modeName = mode === 'dark' ? 'تاریک' : 'روشن';
+      panels.forEach(p => {
+        if (!p.panelSettings) p.panelSettings = {};
+        p.panelSettings.mode = mode;
+      });
+      result.executed = true;
+      result.message = `✅ حالت همه پنل‌ها به "${modeName}" تغییر کرد`;
+      result.type = 'mode';
+      return result;
+    }
+  }
+  
+  // LIST
+  if (command.includes('LIST')) {
+    if (panels.length === 0) {
+      result.executed = true;
+      result.message = '📭 هیچ پنلی وجود ندارد';
+    } else {
+      let list = '📋 لیست پنل‌ها:\n';
+      panels.forEach((p, i) => {
+        const status = p.status === 'active' ? '✅' : '❌';
+        list += `${i+1}. 📡 ${p.name} ${status} ${p.remainingDays} روز\n`;
+      });
+      result.executed = true;
+      result.message = list;
+      result.type = 'list';
+    }
+    return result;
+  }
+  
+  result.message = '⚠️ دستور قابل تشخیص نبود';
+  return result;
 }
 
 // ============================================================
