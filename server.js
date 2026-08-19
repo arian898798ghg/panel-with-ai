@@ -69,7 +69,7 @@ app.get('/api/panel/:slug', (req, res) => {
 });
 
 // ============================================================
-// ========== هوش مصنوعی (API + اجرای مستقیم) ==========
+// ========== هوش مصنوعی با تشخیص قوی ==========
 // ============================================================
 
 app.post('/api/ai/chat', async (req, res) => {
@@ -77,8 +77,8 @@ app.post('/api/ai/chat', async (req, res) => {
   
   console.log('📨 پیام کاربر:', message);
   
-  // ===== اول خودمون دستور رو بررسی می‌کنیم =====
-  const directResult = checkAndExecute(message);
+  // ===== اول خودمون دستور رو تشخیص می‌دیم (قوی) =====
+  const directResult = strongDetectAndExecute(message);
   if (directResult.executed) {
     console.log('✅ اجرای مستقیم:', directResult.message);
     aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
@@ -90,135 +90,73 @@ app.post('/api/ai/chat', async (req, res) => {
     });
   }
   
-  // ===== اگر خودمون نتونستیم، از API استفاده کن =====
+  // ===== اگر خودمون نتونستیم، از API می‌پرسیم =====
   const apiKey = process.env.AI_API_KEY;
   const baseUrl = process.env.AI_BASE_URL || 'https://api.vivgrid.com/v1';
   const model = process.env.AI_MODEL || 'deepseek-chat';
   
-  if (!apiKey) {
-    return res.json({ 
-      success: false, 
-      message: '❌ API Key تنظیم نشده است' 
-    });
-  }
-
-  try {
-    const panelsInfo = panels.map(p => ({
-      name: p.name,
-      days: p.remainingDays,
-      storage: p.storage,
-      users: p.users,
-      status: p.status
-    }));
-
-    const systemPrompt = `You are an AI assistant for a DNS panel.
-Current panels: ${panelsInfo.length > 0 ? JSON.stringify(panelsInfo) : 'None'}
-
-🔧 YOUR JOB: Parse the user's request and return ONLY ONE of these commands:
-
+  if (apiKey) {
+    try {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { 
+              role: 'system', 
+              content: `You are an AI assistant. Parse this request and return ONLY a command:
+              
 COMMANDS:
-1. CREATE: "CREATE:name:days:storage:users"
-   Example: "CREATE:ایران:30:100:10"
+- CREATE:name:days:storage:users
+- DELETE:name
+- DELETE_ALL
+- THEME:color
+- MODE:dark
+- LIST
 
-2. DELETE: "DELETE:name"
-   Example: "DELETE:ایران"
-
-3. DELETE_ALL: "DELETE_ALL"
-
-4. THEME: "THEME:color"
-   Example: "THEME:brown"
-
-5. MODE: "MODE:dark" or "MODE:light"
-
-6. LIST: "LIST"
-
-7. HELP: "HELP"
-
-IMPORTANT: 
-- Extract the panel name from user's message
-- Extract days, storage, users from user's message
-- Return ONLY the command, nothing else
-- For CREATE, use the exact name user said
-
-User request: "${message}"
-
-Return ONLY the command:`;
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message }
-        ],
-        temperature: 0.1,
-        max_tokens: 100
-      })
-    });
-
-    const data = await response.json();
-    
-    if (!response.ok) {
-      console.error('❌ API Error:', data);
-      return res.json({ 
-        success: false, 
-        message: `❌ خطا در API: ${data.error?.message || 'Unknown'}` 
+Example: "CREATE:ایران:30:100:10"
+Return ONLY the command.` 
+            },
+            { role: 'user', content: message }
+          ],
+          temperature: 0.1,
+          max_tokens: 50
+        })
       });
-    }
-    
-    const reply = data.choices?.[0]?.message?.content || '';
-    console.log('🤖 پاسخ API:', reply);
-    
-    // ===== اجرای دستور از روی پاسخ API =====
-    const result = executeFromAPI(reply);
-    
-    // اگه API نتونست، خودمون دوباره امتحان می‌کنیم
-    if (!result.executed) {
-      const fallback = checkAndExecute(message);
-      if (fallback.executed) {
-        aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
-        aiHistory.push({ role: 'assistant', content: fallback.message, timestamp: new Date().toISOString() });
-        return res.json({ success: true, message: fallback.message, result: fallback });
+
+      const data = await response.json();
+      if (response.ok && data.choices?.[0]?.message?.content) {
+        const reply = data.choices[0].message.content.trim();
+        console.log('🤖 پاسخ API:', reply);
+        
+        const apiResult = executeFromAPI(reply);
+        if (apiResult.executed) {
+          aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+          aiHistory.push({ role: 'assistant', content: apiResult.message, timestamp: new Date().toISOString() });
+          return res.json({ success: true, message: apiResult.message, result: apiResult });
+        }
       }
+    } catch (e) {
+      console.log('⚠️ API error, using fallback');
     }
-    
-    aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
-    aiHistory.push({ role: 'assistant', content: result.message || reply, timestamp: new Date().toISOString() });
-    
-    res.json({
-      success: true,
-      message: result.message || reply,
-      result: result
-    });
-    
-  } catch (error) {
-    console.error('❌ Error:', error);
-    
-    // در صورت خطا، خودمون امتحان می‌کنیم
-    const fallback = checkAndExecute(message);
-    if (fallback.executed) {
-      aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
-      aiHistory.push({ role: 'assistant', content: fallback.message, timestamp: new Date().toISOString() });
-      return res.json({ success: true, message: fallback.message, result: fallback });
-    }
-    
-    res.json({ 
-      success: false, 
-      message: `❌ خطا: ${error.message}` 
-    });
   }
+  
+  // ===== اگر هیچ کاری نشد =====
+  const helpMsg = getHelpMessage();
+  aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+  aiHistory.push({ role: 'assistant', content: helpMsg, timestamp: new Date().toISOString() });
+  res.json({ success: true, message: helpMsg });
 });
 
 // ============================================================
-// ========== بررسی و اجرای مستقیم دستورات ==========
+// ========== تشخیص قوی دستورات ==========
 // ============================================================
 
-function checkAndExecute(message) {
+function strongDetectAndExecute(message) {
   if (!message || message.trim() === '') {
     return { executed: false };
   }
@@ -226,32 +164,75 @@ function checkAndExecute(message) {
   const lower = message.toLowerCase().trim();
   const result = { executed: false, message: '' };
   
+  console.log('🔍 تحلیل پیام:', message);
+  
+  // ============================================================
   // ===== 1. ساخت پنل =====
+  // ============================================================
   if (lower.includes('ساخت') || lower.includes('create') || 
       lower.includes('بساز') || lower.includes('make') ||
-      lower.includes('پنل') || lower.includes('کانفینگ')) {
+      lower.includes('پنل') || lower.includes('کانفینگ') ||
+      lower.includes('کانفیگ') || lower.includes('جدید')) {
     
-    // استخراج اسم
-    let name = 'پنل جدید';
-    const nameMatch = message.match(/["']([^"']*)["']/);
-    if (nameMatch && nameMatch[1]) {
-      name = nameMatch[1];
-    } else {
-      // اسم بعد از "ساخت" یا "پنل"
-      const patterns = [
-        /ساخت\s+(?:پنل|کانفینگ)?\s*["']?([^\s,،.]+)["']?/i,
-        /پنل\s+["']?([^\s,،.]+)["']?/i,
-        /با\s+نام\s+["']?([^\s,،.]+)["']?/i
-      ];
-      for (const pattern of patterns) {
-        const match = message.match(pattern);
-        if (match && match[1]) {
-          name = match[1];
+    console.log('🔧 تشخیص: ساخت پنل');
+    
+    // استخراج اسم - با روش‌های مختلف
+    let name = null;
+    
+    // روش 1: از نقل قول
+    const quoteMatch = message.match(/["']([^"']*)["']/);
+    if (quoteMatch && quoteMatch[1]) {
+      name = quoteMatch[1];
+    }
+    
+    // روش 2: "پنل [اسم]"
+    if (!name) {
+      const match = message.match(/پنل\s+["']?([^\s,،.]+)["']?/i);
+      if (match && match[1]) name = match[1];
+    }
+    
+    // روش 3: "با نام [اسم]"
+    if (!name) {
+      const match = message.match(/با\s+نام\s+["']?([^\s,،.]+)["']?/i);
+      if (match && match[1]) name = match[1];
+    }
+    
+    // روش 4: "ساخت [اسم]"
+    if (!name) {
+      const match = message.match(/(?:ساخت|create|بساز|make)\s+["']?([^\s,،.]+)["']?/i);
+      if (match && match[1]) name = match[1];
+    }
+    
+    // روش 5: اگر هیچکدام، اسم رو از کلمه بعد از "با" بگیر
+    if (!name) {
+      const words = message.split(/\s+/);
+      for (let i = 0; i < words.length; i++) {
+        if (words[i] === 'با' && i + 1 < words.length) {
+          name = words[i + 1];
           break;
         }
       }
     }
-    name = name.replace(/[.,،!?]/g, '').trim();
+    
+    // اگر بازم اسم پیدا نشد، از آخرین کلمه استفاده کن
+    if (!name) {
+      const words = message.split(/\s+/);
+      const lastWord = words[words.length - 1];
+      const keywords = ['ساخت', 'create', 'بساز', 'make', 'پنل', 'کانفینگ', 'کانفیگ', 'روز', 'گیگ', 'کاربر'];
+      if (lastWord && !keywords.includes(lastWord.toLowerCase())) {
+        name = lastWord;
+      }
+    }
+    
+    // پاکسازی اسم
+    if (name) {
+      name = name.replace(/[.,،!?]/g, '').trim();
+    }
+    
+    // اگر اسم پیدا نشد، از "پنل جدید" استفاده کن
+    if (!name || name.length < 1) {
+      name = 'پنل جدید';
+    }
     
     // استخراج روز
     let days = 30;
@@ -268,7 +249,7 @@ function checkAndExecute(message) {
     const usersMatch = message.match(/(\d+)\s*(?:users?|کاربر)/i);
     if (usersMatch) users = parseInt(usersMatch[1]);
     
-    console.log('📦 ساخت پنل:', { name, days, storage, users });
+    console.log('📦 اطلاعات استخراج شده:', { name, days, storage, users });
     
     // ساخت پنل
     const slug = generateSlug(name);
@@ -301,16 +282,22 @@ function checkAndExecute(message) {
     return result;
   }
   
+  // ============================================================
   // ===== 2. حذف پنل =====
+  // ============================================================
   if (lower.includes('حذف') || lower.includes('delete') || 
-      lower.includes('پاک کن') || lower.includes('remove')) {
+      lower.includes('پاک کن') || lower.includes('remove') ||
+      lower.includes('پاکش کن') || lower.includes('بردار')) {
+    
+    console.log('🔧 تشخیص: حذف پنل');
     
     let name = null;
-    const nameMatch = message.match(/["']([^"']*)["']/);
-    if (nameMatch && nameMatch[1]) name = nameMatch[1];
+    
+    const quoteMatch = message.match(/["']([^"']*)["']/);
+    if (quoteMatch && quoteMatch[1]) name = quoteMatch[1];
     
     if (!name) {
-      const regex = /(?:حذف|delete|پاک\s+کن|remove)\s+(?:پنل|panel)?\s*["']?([^\s,،.]+)["']?/i;
+      const regex = /(?:حذف|delete|پاک\s+کن|remove|بردار)\s+(?:پنل|panel)?\s*["']?([^\s,،.]+)["']?/i;
       const match = message.match(regex);
       if (match && match[1]) name = match[1];
     }
@@ -339,8 +326,11 @@ function checkAndExecute(message) {
     }
   }
   
+  // ============================================================
   // ===== 3. حذف همه =====
-  if (lower.includes('همه') && (lower.includes('حذف') || lower.includes('پاک'))) {
+  // ============================================================
+  if ((lower.includes('همه') || lower.includes('all')) && 
+      (lower.includes('حذف') || lower.includes('پاک') || lower.includes('delete'))) {
     const count = panels.length;
     panels = [];
     result.executed = true;
@@ -349,9 +339,13 @@ function checkAndExecute(message) {
     return result;
   }
   
+  // ============================================================
   // ===== 4. لیست =====
+  // ============================================================
   if (lower.includes('لیست') || lower.includes('نمایش') || 
-      lower.includes('list') || lower.includes('show')) {
+      lower.includes('list') || lower.includes('show') ||
+      lower.includes('چند تا') || lower.includes('پنل‌ها')) {
+    
     if (panels.length === 0) {
       result.executed = true;
       result.message = '📭 هیچ پنلی وجود ندارد';
@@ -365,6 +359,69 @@ function checkAndExecute(message) {
       result.message = list;
       result.type = 'list';
     }
+    return result;
+  }
+  
+  // ============================================================
+  // ===== 5. تغییر تم =====
+  // ============================================================
+  if (lower.includes('تم') || lower.includes('رنگ') || 
+      lower.includes('theme') || lower.includes('color')) {
+    
+    const colors = ['blue', 'purple', 'green', 'rose', 'brown', 'red', 'orange', 'teal'];
+    const colorNames = {
+      'آبی': 'blue', 'blue': 'blue',
+      'بنفش': 'purple', 'purple': 'purple',
+      'سبز': 'green', 'green': 'green',
+      'صورتی': 'rose', 'pink': 'rose', 'rose': 'rose',
+      'قهوه ای': 'brown', 'قهوه‌ای': 'brown', 'brown': 'brown',
+      'قرمز': 'red', 'red': 'red',
+      'نارنجی': 'orange', 'orange': 'orange',
+      'فیروزه ای': 'teal', 'فیروزه‌ای': 'teal', 'teal': 'teal'
+    };
+    
+    let foundColor = null;
+    for (const [key, val] of Object.entries(colorNames)) {
+      if (lower.includes(key)) {
+        foundColor = val;
+        break;
+      }
+    }
+    
+    if (foundColor) {
+      panels.forEach(p => {
+        if (!p.panelSettings) p.panelSettings = {};
+        p.panelSettings.color = foundColor;
+      });
+      result.executed = true;
+      result.message = `✅ تم همه پنل‌ها به "${foundColor}" تغییر کرد`;
+      result.type = 'theme';
+      return result;
+    }
+  }
+  
+  // ============================================================
+  // ===== 6. تغییر حالت =====
+  // ============================================================
+  if (lower.includes('تاریک') || lower.includes('dark')) {
+    panels.forEach(p => {
+      if (!p.panelSettings) p.panelSettings = {};
+      p.panelSettings.mode = 'dark';
+    });
+    result.executed = true;
+    result.message = '✅ حالت همه پنل‌ها به "تاریک" تغییر کرد';
+    result.type = 'mode';
+    return result;
+  }
+  
+  if (lower.includes('روشن') || lower.includes('light')) {
+    panels.forEach(p => {
+      if (!p.panelSettings) p.panelSettings = {};
+      p.panelSettings.mode = 'light';
+    });
+    result.executed = true;
+    result.message = '✅ حالت همه پنل‌ها به "روشن" تغییر کرد';
+    result.type = 'mode';
     return result;
   }
   
@@ -459,37 +516,6 @@ function executeFromAPI(command) {
     return result;
   }
   
-  // THEME:color
-  if (command.startsWith('THEME:')) {
-    const color = command.split(':')[1];
-    if (color) {
-      panels.forEach(p => {
-        if (!p.panelSettings) p.panelSettings = {};
-        p.panelSettings.color = color;
-      });
-      result.executed = true;
-      result.message = `✅ تم همه پنل‌ها به "${color}" تغییر کرد`;
-      result.type = 'theme';
-      return result;
-    }
-  }
-  
-  // MODE:dark / MODE:light
-  if (command.startsWith('MODE:')) {
-    const mode = command.split(':')[1];
-    if (mode === 'dark' || mode === 'light') {
-      const modeName = mode === 'dark' ? 'تاریک' : 'روشن';
-      panels.forEach(p => {
-        if (!p.panelSettings) p.panelSettings = {};
-        p.panelSettings.mode = mode;
-      });
-      result.executed = true;
-      result.message = `✅ حالت همه پنل‌ها به "${modeName}" تغییر کرد`;
-      result.type = 'mode';
-      return result;
-    }
-  }
-  
   // LIST
   if (command.includes('LIST')) {
     if (panels.length === 0) {
@@ -508,6 +534,21 @@ function executeFromAPI(command) {
     return result;
   }
   
+  // THEME:color
+  if (command.startsWith('THEME:')) {
+    const color = command.split(':')[1];
+    if (color) {
+      panels.forEach(p => {
+        if (!p.panelSettings) p.panelSettings = {};
+        p.panelSettings.color = color;
+      });
+      result.executed = true;
+      result.message = `✅ تم همه پنل‌ها به "${color}" تغییر کرد`;
+      result.type = 'theme';
+      return result;
+    }
+  }
+  
   result.message = '⚠️ دستور قابل تشخیص نبود';
   return result;
 }
@@ -515,6 +556,32 @@ function executeFromAPI(command) {
 // ============================================================
 // ========== توابع کمکی ==========
 // ============================================================
+
+function getHelpMessage() {
+  return `🤖 من یک دستیار هوشمند هستم. می‌توانید این کارها را انجام دهید:
+
+📌 ساخت پنل:
+   "ساخت پنل [اسم] با [تعداد] روز و [تعداد] گیگ و [تعداد] کاربر"
+   مثال: "ساخت پنل ایران با 30 روز و 100 گیگ و 10 کاربر"
+   یا: "یک پنل با نام ایران با 30 روز، 100 گیگابایت و 10 کاربر بساز"
+
+🗑️ حذف پنل:
+   "حذف پنل ایران" یا "پاک کن پنل ایران"
+
+🧹 حذف همه:
+   "حذف همه پنل‌ها" یا "پاک کن همه"
+
+📋 لیست پنل‌ها:
+   "لیست پنل‌ها" یا "نمایش پنل‌ها"
+
+🎨 تغییر تم:
+   "تم قهوه‌ای" یا "رنگ بنفش"
+
+🌓 تغییر حالت:
+   "حالت تاریک" یا "حالت روشن"
+
+💡 هر سوالی دارید بپرسید!`;
+}
 
 function generateSlug(name) {
   if (!name) return 'panel-' + Date.now();
