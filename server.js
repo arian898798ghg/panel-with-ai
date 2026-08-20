@@ -3,9 +3,11 @@ const path = require('path');
 const cors = require('cors');
 require('dotenv').config();
 
+// ========== تعریف app ==========
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ========== Middleware ==========
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
@@ -14,15 +16,7 @@ app.use(express.static('public'));
 let panels = [];
 let aiHistory = [];
 
-// ========== سیستم کاربران ==========
-// مالک اصلی (از env می‌خونه)
-const OWNER_USERNAME = process.env.ADMIN_USERNAME || 'arian11';
-const OWNER_PASSWORD = process.env.ADMIN_PASSWORD || 'arian11';
-
-// لیست ادمین‌ها (با دسترسی‌های مختلف)
-let admins = [];
-
-// ========== توابع کمکی ==========
+// ========== تولید اسلاگ رندوم ==========
 function generateRandomSlug(length = 4) {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -32,879 +26,627 @@ function generateRandomSlug(length = 4) {
   return result;
 }
 
-function generateToken() {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-}
-
 // ========== ROUTES ==========
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('/settings', (req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
 app.get('/ai', (req, res) => res.sendFile(path.join(__dirname, 'public', 'ai.html')));
-app.get('/admin-panel', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin-panel.html')));
 
 // ========== API ==========
-
-// ===== LOGIN =====
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  
-  // بررسی مالک اصلی
-  if (username === OWNER_USERNAME && password === OWNER_PASSWORD) {
-    return res.json({
-      success: true,
-      role: 'owner',
-      username: username,
-      message: 'ورود با موفقیت انجام شد (مالک)'
-    });
+  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false });
   }
-  
-  // بررسی ادمین‌ها
-  const admin = admins.find(a => 
-    a.username === username && 
-    a.password === password && 
-    a.status === 'active' &&
-    new Date(a.expiresAt) > new Date()
-  );
-  
-  if (admin) {
-    return res.json({
-      success: true,
-      role: 'admin',
-      username: username,
-      permissions: admin.permissions,
-      message: `ورود با موفقیت انجام شد (${admin.daysLeft || 0} روز باقی‌مانده)`
-    });
-  }
-  
-  // بررسی ادمین منقضی شده
-  const expiredAdmin = admins.find(a => 
-    a.username === username && 
-    a.password === password && 
-    a.status === 'expired'
-  );
-  
-  if (expiredAdmin) {
-    return res.status(401).json({
-      success: false,
-      message: '❌ حساب کاربری شما منقضی شده است'
-    });
-  }
-  
-  res.status(401).json({
-    success: false,
-    message: '❌ نام کاربری یا رمز عبور اشتباه است'
-  });
 });
 
-// ===== لیست ادمین‌ها (فقط مالک) =====
-app.get('/api/admins', (req, res) => {
-  const { username, password } = req.query;
-  
-  if (username !== OWNER_USERNAME || password !== OWNER_PASSWORD) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
-  res.json({ success: true, admins: admins });
-});
+app.get('/api/panels', (req, res) => res.json(panels));
 
-// ===== ساخت ادمین جدید (فقط مالک) =====
-app.post('/api/admins/create', (req, res) => {
-  const { ownerUser, ownerPass, newUsername, newPassword, days, permissions } = req.body;
-  
-  // بررسی مالک
-  if (ownerUser !== OWNER_USERNAME || ownerPass !== OWNER_PASSWORD) {
-    return res.status(403).json({ success: false, message: '❌ احراز هویت مالک ناموفق' });
-  }
-  
-  // بررسی تکراری نبودن
-  if (admins.some(a => a.username === newUsername)) {
-    return res.json({ success: false, message: '❌ این نام کاربری قبلاً ثبت شده است' });
-  }
-  
-  // محاسبه تاریخ انقضا
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + days);
-  
-  // دسترسی‌های پیش‌فرض (همه false)
-  const defaultPermissions = {
-    view_panels: false,
-    create_panel: false,
-    delete_panel: false,
-    edit_panel: false,
-    toggle_panel: false,
-    change_theme: false,
-    change_mode: false,
-    view_admins: false,
-    create_admin: false,
-    delete_admin: false,
-    change_owner_pass: false,
-    edit_permissions: false,
-    ...permissions
-  };
-  
-  const newAdmin = {
-    id: Date.now(),
-    username: newUsername,
-    password: newPassword,
-    createdAt: new Date().toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    days: days,
-    daysLeft: days,
-    status: 'active',
-    permissions: defaultPermissions,
-    createdBy: ownerUser
-  };
-  
-  admins.push(newAdmin);
-  
-  res.json({
-    success: true,
-    message: `✅ ادمین "${newUsername}" با ${days} روز اعتبار ساخته شد`,
-    admin: newAdmin
-  });
-});
-
-// ===== تغییر رمز مالک =====
-app.post('/api/owner/change-password', (req, res) => {
-  const { oldPassword, newPassword } = req.body;
-  
-  if (oldPassword !== OWNER_PASSWORD) {
-    return res.json({ success: false, message: '❌ رمز فعلی اشتباه است' });
-  }
-  
-  // در اینجا رمز در env ذخیره نمیشه، برای محیط واقعی باید از دیتابیس استفاده کنی
-  // برای آزمایش، فقط تو لاگ نشون می‌دیم
-  console.log(`🔑 رمز مالک تغییر کرد از "${oldPassword}" به "${newPassword}"`);
-  
-  res.json({
-    success: true,
-    message: '✅ رمز با موفقیت تغییر کرد (تغییر در متغیر محیطی باید انجام شود)',
-    newPassword: newPassword
-  });
-});
-
-// ===== تغییر دسترسی ادمین (فقط مالک) =====
-app.post('/api/admins/permissions', (req, res) => {
-  const { ownerUser, ownerPass, adminUsername, permissions } = req.body;
-  
-  if (ownerUser !== OWNER_USERNAME || ownerPass !== OWNER_PASSWORD) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
-  const admin = admins.find(a => a.username === adminUsername);
-  if (!admin) {
-    return res.json({ success: false, message: '❌ ادمین یافت نشد' });
-  }
-  
-  admin.permissions = { ...admin.permissions, ...permissions };
-  
-  res.json({
-    success: true,
-    message: `✅ دسترسی‌های "${adminUsername}" به‌روز شد`,
-    permissions: admin.permissions
-  });
-});
-
-// ===== حذف ادمین (فقط مالک) =====
-app.post('/api/admins/delete', (req, res) => {
-  const { ownerUser, ownerPass, adminUsername } = req.body;
-  
-  if (ownerUser !== OWNER_USERNAME || ownerPass !== OWNER_PASSWORD) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
-  const index = admins.findIndex(a => a.username === adminUsername);
-  if (index === -1) {
-    return res.json({ success: false, message: '❌ ادمین یافت نشد' });
-  }
-  
-  const removed = admins[index];
-  admins.splice(index, 1);
-  
-  res.json({
-    success: true,
-    message: `✅ ادمین "${adminUsername}" حذف شد`,
-    removed: removed
-  });
-});
-
-// ===== تمدید ادمین (فقط مالک) =====
-app.post('/api/admins/extend', (req, res) => {
-  const { ownerUser, ownerPass, adminUsername, extraDays } = req.body;
-  
-  if (ownerUser !== OWNER_USERNAME || ownerPass !== OWNER_PASSWORD) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
-  const admin = admins.find(a => a.username === adminUsername);
-  if (!admin) {
-    return res.json({ success: false, message: '❌ ادمین یافت نشد' });
-  }
-  
-  const newExpiry = new Date(admin.expiresAt);
-  newExpiry.setDate(newExpiry.getDate() + extraDays);
-  admin.expiresAt = newExpiry.toISOString();
-  admin.days += extraDays;
-  admin.daysLeft += extraDays;
-  admin.status = 'active';
-  
-  res.json({
-    success: true,
-    message: `✅ ${extraDays} روز به ادمین "${adminUsername}" اضافه شد`,
-    admin: admin
-  });
-});
-
-// ============================================================
-// ========== API های پنل با بررسی دسترسی ==========
-// ============================================================
-
-// میدلور بررسی دسترسی
-function checkPermission(username, permission) {
-  if (username === OWNER_USERNAME) return true;
-  const admin = admins.find(a => a.username === username && a.status === 'active');
-  if (!admin) return false;
-  return admin.permissions[permission] === true;
-}
-
-// Get all panels (با بررسی دسترسی)
-app.get('/api/panels', (req, res) => {
-  const { username } = req.query;
-  if (!username || !checkPermission(username, 'view_panels')) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  res.json(panels);
-});
-
-// Create panel (با بررسی دسترسی)
 app.post('/api/panels', (req, res) => {
-  const { username, ...panelData } = req.body;
-  if (!username || !checkPermission(username, 'create_panel')) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
+  const panel = req.body;
+  panel.id = Date.now();
+  panel.createdAt = new Date().toISOString();
   
-  const panel = {
-    ...panelData,
-    id: Date.now(),
-    slug: panelData.slug || generateRandomSlug(4),
-    createdAt: new Date().toISOString(),
-    createdBy: username
-  };
+  // اگر اسلاگ نداشت، رندوم بساز
+  if (!panel.slug) {
+    panel.slug = generateRandomSlug(4);
+  }
   
   panels.unshift(panel);
   res.json({ success: true, panel });
 });
 
-// Update panel (با بررسی دسترسی)
 app.put('/api/panels/:id', (req, res) => {
-  const { username, ...updateData } = req.body;
-  if (!username || !checkPermission(username, 'edit_panel')) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
   const id = parseInt(req.params.id);
   const index = panels.findIndex(p => p.id === id);
-  if (index === -1) {
-    return res.status(404).json({ success: false, message: 'پنل یافت نشد' });
-  }
-  
-  panels[index] = { ...panels[index], ...updateData };
+  if (index === -1) return res.status(404).json({ success: false });
+  panels[index] = { ...panels[index], ...req.body };
   res.json({ success: true, panel: panels[index] });
 });
 
-// Delete panel (با بررسی دسترسی)
 app.delete('/api/panels/:id', (req, res) => {
-  const { username } = req.body;
-  if (!username || !checkPermission(username, 'delete_panel')) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
   const id = parseInt(req.params.id);
   panels = panels.filter(p => p.id !== id);
   res.json({ success: true });
 });
 
-// Toggle panel (با بررسی دسترسی)
 app.patch('/api/panels/:id/toggle', (req, res) => {
-  const { username } = req.body;
-  if (!username || !checkPermission(username, 'toggle_panel')) {
-    return res.status(403).json({ success: false, message: '❌ دسترسی غیرمجاز' });
-  }
-  
   const id = parseInt(req.params.id);
   const index = panels.findIndex(p => p.id === id);
-  if (index === -1) {
-    return res.status(404).json({ success: false, message: 'پنل یافت نشد' });
-  }
+  if (index === -1) return res.status(404).json({ success: false });
   panels[index].status = panels[index].status === 'active' ? 'inactive' : 'active';
   res.json({ success: true, panel: panels[index] });
 });
 
-// ============================================================
-// ========== صفحه ادمین پنل ==========
-// ============================================================
-
-app.get('/admin-panel', (req, res) => {
-  res.send(`
-<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>مدیریت ادمین‌ها</title>
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-<style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:Vazirmatn,sans-serif}
-body{background:linear-gradient(135deg,#e6f2ff,#f0f8ff);min-height:100vh;padding:20px;color:#333}
-.container{max-width:1100px;margin:auto}
-.header{background:#fff;border-radius:18px;padding:20px 24px;margin-bottom:18px;border:1px solid #d1e7ff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
-.header h1{color:#007bff;font-size:20px}
-.header h1 i{color:#007bff}
-.header-actions{display:flex;gap:8px;flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:0;border-radius:10px;font-weight:500;cursor:pointer;transition:0.2s;font-size:13px;text-decoration:none}
-.btn-primary{background:#007bff;color:#fff}
-.btn-primary:hover{background:#0056b3;transform:translateY(-2px)}
-.btn-success{background:#28a745;color:#fff}
-.btn-success:hover{background:#218838;transform:translateY(-2px)}
-.btn-danger{background:#dc3545;color:#fff}
-.btn-danger:hover{background:#b02a37;transform:translateY(-2px)}
-.btn-warning{background:#ffc107;color:#333}
-.btn-warning:hover{background:#e0a800;transform:translateY(-2px)}
-.btn-outline{background:transparent;border:2px solid #d1e7ff;color:#333}
-.btn-outline:hover{border-color:#007bff;color:#007bff}
-.card{background:#fff;border-radius:16px;padding:20px;margin-bottom:16px;border:1px solid #d1e7ff;box-shadow:0 8px 30px rgba(0,0,0,.08)}
-.card h2{color:#007bff;font-size:16px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #d1e7ff;display:flex;align-items:center;gap:8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.admin-card{background:#f8fafc;border-radius:12px;padding:16px;border:1px solid #d1e7ff;transition:0.2s}
-.admin-card:hover{transform:translateY(-4px);box-shadow:0 8px 25px rgba(0,0,0,.1)}
-.admin-card .name{font-size:16px;font-weight:600;color:#007bff}
-.admin-card .info{font-size:12px;color:#666;margin:4px 0}
-.admin-card .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600}
-.badge-active{background:rgba(40,167,69,.15);color:#28a745}
-.badge-expired{background:rgba(220,53,69,.15);color:#dc3545}
-.badge-expiring{background:rgba(255,193,7,.15);color:#b88600}
-.admin-card .perms{margin:8px 0}
-.admin-card .perms .perm{display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;margin:1px}
-.perm-on{background:rgba(40,167,69,.15);color:#28a745}
-.perm-off{background:rgba(220,53,69,.15);color:#dc3545}
-.admin-card .actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
-.admin-card .actions button{padding:4px 8px;border:0;border-radius:6px;font-size:10px;cursor:pointer;transition:0.2s}
-.admin-card .actions button:hover{transform:scale(1.05)}
-.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
-.modal.show{display:flex}
-.modal-box{background:#fff;border-radius:18px;padding:28px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;animation:modalIn .3s ease}
-@keyframes modalIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
-.modal-box h3{color:#007bff;margin-bottom:16px;font-size:18px;display:flex;align-items:center;gap:8px}
-.field{margin-bottom:12px}
-.field label{display:block;font-size:13px;font-weight:500;margin-bottom:4px}
-.field input,.field select{width:100%;padding:10px 12px;border:2px solid #d1e7ff;border-radius:8px;font-size:13px;outline:none;transition:0.2s}
-.field input:focus,.field select:focus{border-color:#007bff;box-shadow:0 0 0 3px rgba(0,123,255,.1)}
-.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.permission-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:8px 0;max-height:200px;overflow-y:auto}
-.permission-item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;font-size:11px;background:#f8fafc}
-.permission-item input[type="checkbox"]{accent-color:#007bff;cursor:pointer}
-.permission-item label{cursor:pointer;flex:1}
-.modal-actions{display:flex;gap:8px;margin-top:16px}
-.modal-actions button{flex:1;padding:10px;border:0;border-radius:10px;font-weight:600;cursor:pointer;transition:0.2s}
-.modal-actions button:hover{transform:translateY(-2px)}
-.toast{position:fixed;bottom:20px;right:20px;background:#fff;border:1px solid #d1e7ff;padding:12px 18px;border-radius:10px;font-size:12px;z-index:2000;transform:translateY(80px);opacity:0;transition:.25s;color:#333;box-shadow:0 6px 20px rgba(0,0,0,.15)}
-.toast.show{transform:none;opacity:1}
-.toast.success{border-color:#28a745}
-.toast.error{border-color:#dc3545}
-@media(max-width:600px){.field-row{grid-template-columns:1fr}.permission-grid{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-
-<div class="container">
-  <div class="header">
-    <h1><i class="fas fa-users-cog"></i> مدیریت ادمین‌ها</h1>
-    <div class="header-actions">
-      <button class="btn btn-primary" onclick="showCreateAdmin()"><i class="fas fa-user-plus"></i> ساخت ادمین</button>
-      <button class="btn btn-warning" onclick="showChangePass()"><i class="fas fa-key"></i> تغییر رمز مالک</button>
-      <button class="btn btn-outline" onclick="location.href='/dashboard'"><i class="fas fa-arrow-right"></i> بازگشت</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2><i class="fas fa-list"></i> لیست ادمین‌ها <span id="adminCount" style="font-size:12px;color:#666;font-weight:400;"></span></h2>
-    <div id="adminList" class="grid"></div>
-  </div>
-</div>
-
-<!-- ===== مودال ساخت ادمین ===== -->
-<div class="modal" id="createAdminModal">
-  <div class="modal-box">
-    <h3><i class="fas fa-user-plus"></i> ساخت ادمین جدید</h3>
-    <div class="field">
-      <label>👤 نام کاربری</label>
-      <input type="text" id="newUsername" placeholder="نام کاربری ادمین">
-    </div>
-    <div class="field">
-      <label>🔑 رمز عبور</label>
-      <input type="text" id="newPassword" placeholder="رمز عبور ادمین">
-    </div>
-    <div class="field">
-      <label>📅 تعداد روز اعتبار</label>
-      <input type="number" id="newDays" value="10" min="1" max="365">
-    </div>
-    <div class="field">
-      <label>🔐 رمز مالک برای تأیید</label>
-      <input type="password" id="ownerPassCreate" placeholder="رمز مالک">
-    </div>
-    <div class="field">
-      <label>📋 دسترسی‌ها (همه غیرفعال هستند)</label>
-      <div class="permission-grid" id="permGridCreate">
-        <div class="permission-item"><input type="checkbox" id="p_view_panels"><label>مشاهده پنل‌ها</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_create_panel"><label>ساخت پنل</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_delete_panel"><label>حذف پنل</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_edit_panel"><label>ویرایش پنل</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_toggle_panel"><label>تغییر وضعیت پنل</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_change_theme"><label>تغییر تم</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_change_mode"><label>تغییر حالت</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_view_admins"><label>مشاهده ادمین‌ها</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_create_admin"><label>ساخت ادمین</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_delete_admin"><label>حذف ادمین</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_edit_permissions"><label>ویرایش دسترسی‌ها</label></div>
-        <div class="permission-item"><input type="checkbox" id="p_change_owner_pass"><label>تغییر رمز مالک</label></div>
-      </div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-success" onclick="createAdmin()"><i class="fas fa-save"></i> ساخت</button>
-      <button class="btn btn-danger" onclick="closeModal('createAdminModal')">لغو</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== مودال تغییر رمز ===== -->
-<div class="modal" id="changePassModal">
-  <div class="modal-box">
-    <h3><i class="fas fa-key"></i> تغییر رمز مالک</h3>
-    <div class="field"><label>🔐 رمز فعلی</label><input type="password" id="oldPass" placeholder="رمز فعلی"></div>
-    <div class="field"><label>🔑 رمز جدید</label><input type="text" id="newPass" placeholder="رمز جدید"></div>
-    <div class="modal-actions">
-      <button class="btn btn-warning" onclick="changePassword()"><i class="fas fa-save"></i> تغییر</button>
-      <button class="btn btn-danger" onclick="closeModal('changePassModal')">لغو</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== مودال ویرایش دسترسی ===== -->
-<div class="modal" id="editPermModal">
-  <div class="modal-box">
-    <h3><i class="fas fa-edit"></i> ویرایش دسترسی‌های <span id="editPermUsername"></span></h3>
-    <div class="permission-grid" id="permGridEdit"></div>
-    <div class="field"><label>🔐 رمز مالک</label><input type="password" id="ownerPassEdit" placeholder="رمز مالک"></div>
-    <div class="modal-actions">
-      <button class="btn btn-success" onclick="savePermissions()"><i class="fas fa-save"></i> ذخیره</button>
-      <button class="btn btn-danger" onclick="closeModal('editPermModal')">لغو</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== مودال تمدید ===== -->
-<div class="modal" id="extendModal">
-  <div class="modal-box">
-    <h3><i class="fas fa-calendar-plus"></i> تمدید ادمین <span id="extendUsername"></span></h3>
-    <div class="field"><label>📅 تعداد روز اضافه</label><input type="number" id="extendDays" value="10" min="1" max="365"></div>
-    <div class="field"><label>🔐 رمز مالک</label><input type="password" id="ownerPassExtend" placeholder="رمز مالک"></div>
-    <div class="modal-actions">
-      <button class="btn btn-success" onclick="extendAdmin()"><i class="fas fa-save"></i> تمدید</button>
-      <button class="btn btn-danger" onclick="closeModal('extendModal')">لغو</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== Toast ===== -->
-<div class="toast" id="toast"></div>
-
-<script>
-// ========== STATE ==========
-let currentAdmins = [];
-let editingAdmin = null;
-
-// ========== TOAST ==========
-function toast(msg, type) {
-  var el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = 'toast';
-  if (type) el.classList.add(type);
-  el.classList.add('show');
-  clearTimeout(el._timeout);
-  el._timeout = setTimeout(function(){ el.classList.remove('show'); }, 3000);
-}
-
-// ========== MODAL ==========
-function showModal(id){ document.getElementById(id).classList.add('show'); }
-function closeModal(id){ document.getElementById(id).classList.remove('show'); }
-
-// ========== LOAD ADMINS ==========
-async function loadAdmins() {
-  try {
-    var res = await fetch('/api/admins?username=${OWNER_USERNAME}&password=${OWNER_PASSWORD}');
-    var data = await res.json();
-    if (data.success) {
-      currentAdmins = data.admins || [];
-      renderAdmins();
-    }
-  } catch(e) {
-    toast('❌ خطا در بارگذاری', 'error');
-  }
-}
-
-// ========== RENDER ADMINS ==========
-function renderAdmins() {
-  var container = document.getElementById('adminList');
-  var count = document.getElementById('adminCount');
-  
-  if (!currentAdmins.length) {
-    container.innerHTML = '<div style="text-align:center;padding:30px;color:#666;">هیچ ادمینی ساخته نشده است</div>';
-    count.textContent = '(0)';
-    return;
-  }
-  
-  count.textContent = '(' + currentAdmins.length + ')';
-  
-  var html = '';
-  currentAdmins.forEach(function(a) {
-    var isExpired = new Date(a.expiresAt) < new Date();
-    var isExpiring = !isExpired && a.daysLeft <= 3;
-    var badgeClass = isExpired ? 'badge-expired' : (isExpiring ? 'badge-expiring' : 'badge-active');
-    var badgeText = isExpired ? '❌ منقضی' : (isExpiring ? '⚠️ در حال انقضا' : '✅ فعال');
-    
-    var permsHtml = '';
-    var permNames = {
-      view_panels: 'مشاهده پنل‌ها',
-      create_panel: 'ساخت پنل',
-      delete_panel: 'حذف پنل',
-      edit_panel: 'ویرایش پنل',
-      toggle_panel: 'تغییر وضعیت',
-      change_theme: 'تغییر تم',
-      change_mode: 'تغییر حالت',
-      view_admins: 'مشاهده ادمین‌ها',
-      create_admin: 'ساخت ادمین',
-      delete_admin: 'حذف ادمین',
-      edit_permissions: 'ویرایش دسترسی‌ها',
-      change_owner_pass: 'تغییر رمز مالک'
-    };
-    
-    for (var key in permNames) {
-      if (a.permissions && a.permissions[key]) {
-        permsHtml += '<span class="perm perm-on">' + permNames[key] + '</span>';
-      }
-    }
-    if (!permsHtml) permsHtml = '<span style="font-size:11px;color:#666;">بدون دسترسی</span>';
-    
-    html += \`
-      <div class="admin-card">
-        <div class="name"><i class="fas fa-user-shield"></i> \${a.username}</div>
-        <div class="info">🆔 \${a.id}</div>
-        <div class="info">📅 ساخته شده: \${new Date(a.createdAt).toLocaleDateString('fa-IR')}</div>
-        <div class="info">⏳ انقضا: \${new Date(a.expiresAt).toLocaleDateString('fa-IR')}</div>
-        <div class="info">📆 \${a.daysLeft || 0} روز باقی‌مانده</div>
-        <div><span class="badge \${badgeClass}">\${badgeText}</span></div>
-        <div class="perms">\${permsHtml}</div>
-        <div class="actions">
-          <button class="btn btn-warning" style="padding:3px 8px;font-size:10px;" onclick="showExtend('\${a.username}')"><i class="fas fa-clock"></i> تمدید</button>
-          <button class="btn btn-primary" style="padding:3px 8px;font-size:10px;" onclick="showEditPerms('\${a.username}')"><i class="fas fa-edit"></i> دسترسی</button>
-          <button class="btn btn-danger" style="padding:3px 8px;font-size:10px;" onclick="deleteAdmin('\${a.username}')"><i class="fas fa-trash"></i> حذف</button>
-        </div>
-      </div>
-    \`;
-  });
-  
-  container.innerHTML = html;
-}
-
-// ========== CREATE ADMIN ==========
-function showCreateAdmin() {
-  document.getElementById('newUsername').value = '';
-  document.getElementById('newPassword').value = '';
-  document.getElementById('newDays').value = 10;
-  document.getElementById('ownerPassCreate').value = '';
-  document.querySelectorAll('#permGridCreate input').forEach(function(cb){ cb.checked = false; });
-  showModal('createAdminModal');
-}
-
-async function createAdmin() {
-  var username = document.getElementById('newUsername').value.trim();
-  var password = document.getElementById('newPassword').value.trim();
-  var days = parseInt(document.getElementById('newDays').value) || 10;
-  var ownerPass = document.getElementById('ownerPassCreate').value.trim();
-  
-  if (!username || !password) {
-    toast('❌ نام کاربری و رمز را وارد کنید', 'error');
-    return;
-  }
-  if (!ownerPass) {
-    toast('❌ رمز مالک را وارد کنید', 'error');
-    return;
-  }
-  
-  var perms = {};
-  document.querySelectorAll('#permGridCreate input').forEach(function(cb) {
-    perms[cb.id.replace('p_', '')] = cb.checked;
-  });
-  
-  try {
-    var res = await fetch('/api/admins/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ownerUser: '${OWNER_USERNAME}',
-        ownerPass: ownerPass,
-        newUsername: username,
-        newPassword: password,
-        days: days,
-        permissions: perms
-      })
-    });
-    var data = await res.json();
-    if (data.success) {
-      toast('✅ ' + data.message, 'success');
-      closeModal('createAdminModal');
-      loadAdmins();
-    } else {
-      toast('❌ ' + data.message, 'error');
-    }
-  } catch(e) {
-    toast('❌ خطا در ارتباط', 'error');
-  }
-}
-
-// ========== CHANGE PASSWORD ==========
-function showChangePass() {
-  document.getElementById('oldPass').value = '';
-  document.getElementById('newPass').value = '';
-  showModal('changePassModal');
-}
-
-async function changePassword() {
-  var oldPass = document.getElementById('oldPass').value.trim();
-  var newPass = document.getElementById('newPass').value.trim();
-  
-  if (!oldPass || !newPass) {
-    toast('❌ هر دو رمز را وارد کنید', 'error');
-    return;
-  }
-  if (newPass.length < 4) {
-    toast('❌ رمز جدید حداقل ۴ کاراکتر باشد', 'error');
-    return;
-  }
-  
-  try {
-    var res = await fetch('/api/owner/change-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ oldPassword: oldPass, newPassword: newPass })
-    });
-    var data = await res.json();
-    if (data.success) {
-      toast('✅ ' + data.message, 'success');
-      closeModal('changePassModal');
-    } else {
-      toast('❌ ' + data.message, 'error');
-    }
-  } catch(e) {
-    toast('❌ خطا در ارتباط', 'error');
-  }
-}
-
-// ========== DELETE ADMIN ==========
-async function deleteAdmin(username) {
-  if (!confirm('آیا از حذف ادمین "' + username + '" اطمینان دارید؟')) return;
-  
-  var ownerPass = prompt('🔐 رمز مالک را وارد کنید:');
-  if (!ownerPass) return;
-  
-  try {
-    var res = await fetch('/api/admins/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ownerUser: '${OWNER_USERNAME}',
-        ownerPass: ownerPass,
-        adminUsername: username
-      })
-    });
-    var data = await res.json();
-    if (data.success) {
-      toast('✅ ' + data.message, 'success');
-      loadAdmins();
-    } else {
-      toast('❌ ' + data.message, 'error');
-    }
-  } catch(e) {
-    toast('❌ خطا در ارتباط', 'error');
-  }
-}
-
-// ========== SHOW EXTEND ==========
-function showExtend(username) {
-  editingAdmin = username;
-  document.getElementById('extendUsername').textContent = username;
-  document.getElementById('extendDays').value = 10;
-  document.getElementById('ownerPassExtend').value = '';
-  showModal('extendModal');
-}
-
-async function extendAdmin() {
-  var days = parseInt(document.getElementById('extendDays').value) || 10;
-  var ownerPass = document.getElementById('ownerPassExtend').value.trim();
-  
-  if (!ownerPass) {
-    toast('❌ رمز مالک را وارد کنید', 'error');
-    return;
-  }
-  
-  try {
-    var res = await fetch('/api/admins/extend', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ownerUser: '${OWNER_USERNAME}',
-        ownerPass: ownerPass,
-        adminUsername: editingAdmin,
-        extraDays: days
-      })
-    });
-    var data = await res.json();
-    if (data.success) {
-      toast('✅ ' + data.message, 'success');
-      closeModal('extendModal');
-      loadAdmins();
-    } else {
-      toast('❌ ' + data.message, 'error');
-    }
-  } catch(e) {
-    toast('❌ خطا در ارتباط', 'error');
-  }
-}
-
-// ========== SHOW EDIT PERMS ==========
-function showEditPerms(username) {
-  editingAdmin = username;
-  var admin = currentAdmins.find(a => a.username === username);
-  if (!admin) {
-    toast('❌ ادمین یافت نشد', 'error');
-    return;
-  }
-  
-  document.getElementById('editPermUsername').textContent = username;
-  document.getElementById('ownerPassEdit').value = '';
-  
-  var grid = document.getElementById('permGridEdit');
-  var permNames = {
-    view_panels: 'مشاهده پنل‌ها',
-    create_panel: 'ساخت پنل',
-    delete_panel: 'حذف پنل',
-    edit_panel: 'ویرایش پنل',
-    toggle_panel: 'تغییر وضعیت',
-    change_theme: 'تغییر تم',
-    change_mode: 'تغییر حالت',
-    view_admins: 'مشاهده ادمین‌ها',
-    create_admin: 'ساخت ادمین',
-    delete_admin: 'حذف ادمین',
-    edit_permissions: 'ویرایش دسترسی‌ها',
-    change_owner_pass: 'تغییر رمز مالک'
-  };
-  
-  var html = '';
-  for (var key in permNames) {
-    var checked = admin.permissions && admin.permissions[key] ? 'checked' : '';
-    html += '<div class="permission-item"><input type="checkbox" id="ep_' + key + '" ' + checked + '><label>' + permNames[key] + '</label></div>';
-  }
-  grid.innerHTML = html;
-  
-  showModal('editPermModal');
-}
-
-async function savePermissions() {
-  var ownerPass = document.getElementById('ownerPassEdit').value.trim();
-  if (!ownerPass) {
-    toast('❌ رمز مالک را وارد کنید', 'error');
-    return;
-  }
-  
-  var perms = {};
-  document.querySelectorAll('#permGridEdit input').forEach(function(cb) {
-    perms[cb.id.replace('ep_', '')] = cb.checked;
-  });
-  
-  try {
-    var res = await fetch('/api/admins/permissions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ownerUser: '${OWNER_USERNAME}',
-        ownerPass: ownerPass,
-        adminUsername: editingAdmin,
-        permissions: perms
-      })
-    });
-    var data = await res.json();
-    if (data.success) {
-      toast('✅ ' + data.message, 'success');
-      closeModal('editPermModal');
-      loadAdmins();
-    } else {
-      toast('❌ ' + data.message, 'error');
-    }
-  } catch(e) {
-    toast('❌ خطا در ارتباط', 'error');
-  }
-}
-
-// ========== INIT ==========
-loadAdmins();
-
-// بارگذاری خودکار هر ۳۰ ثانیه
-setInterval(loadAdmins, 30000);
-</script>
-</body>
-</html>
-  `);
+app.get('/api/panel/:slug', (req, res) => {
+  const panel = panels.find(p => p.slug === req.params.slug);
+  if (!panel) return res.status(404).json({ success: false });
+  res.json({ success: true, panel });
 });
 
 // ============================================================
-// ========== SERVE PANEL PAGE ==========
+// ========== هوش مصنوعی ==========
+// ============================================================
+
+const AVAILABLE_COLORS = {
+  'blue': ['blue', 'آبی'],
+  'purple': ['purple', 'بنفش'],
+  'green': ['green', 'سبز'],
+  'rose': ['rose', 'صورتی', 'pink'],
+  'brown': ['brown', 'قهوه ای', 'قهوه‌ای'],
+  'red': ['red', 'قرمز'],
+  'orange': ['orange', 'نارنجی'],
+  'teal': ['teal', 'فیروزه ای', 'فیروزه‌ای']
+};
+
+app.post('/api/ai/chat', async (req, res) => {
+  const { message } = req.body;
+  
+  console.log('📨 پیام کاربر:', message);
+  
+  const apiKey = process.env.AI_API_KEY;
+  const baseUrl = process.env.AI_BASE_URL || 'https://api.vivgrid.com/v1';
+  const model = process.env.AI_MODEL || 'deepseek-chat';
+  
+  if (!apiKey) {
+    return res.json({ 
+      success: false, 
+      message: '❌ API Key تنظیم نشده است' 
+    });
+  }
+
+  try {
+    const panelsInfo = panels.map(p => ({
+      name: p.name,
+      days: p.remainingDays,
+      storage: p.storage,
+      users: p.users,
+      status: p.status,
+      color: p.panelSettings?.color || 'blue',
+      mode: p.panelSettings?.mode || 'light',
+      slug: p.slug
+    }));
+
+    const systemPrompt = `You are a friendly AI assistant for a DNS management panel.
+
+📋 CURRENT PANELS (${panels.length} panels):
+${panelsInfo.length > 0 ? JSON.stringify(panelsInfo, null, 2) : '⚠️ No panels yet.'}
+
+🎨 AVAILABLE COLORS: blue, purple, green, rose, brown, red, orange, teal
+
+🔧 WHAT YOU CAN DO:
+- Create panels (with random slug like "x7k3")
+- Delete panels
+- Change theme/color
+- Change mode (dark/light)
+- List panels
+- Change storage
+- Add days
+
+🚨 RULES:
+1. If user asks a QUESTION, just ANSWER the question
+2. If user makes a JOKE, respond with a friendly joke
+3. ONLY execute commands when user clearly asks to DO something
+4. When creating a panel, use a random 4-character slug
+5. Be friendly and respond in the SAME language as the user
+
+User: "${message}"
+
+Respond in a friendly way.`;
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: message }
+        ],
+        temperature: 0.3,
+        max_tokens: 400
+      })
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error('AI API Error:', data);
+      return res.json({ 
+        success: false, 
+        message: `❌ خطا: ${data.error?.message || 'Unknown'}` 
+      });
+    }
+    
+    let reply = data.choices?.[0]?.message?.content || 'سلام! چطور می‌توانم کمک کنم؟';
+    console.log('🤖 پاسخ AI:', reply);
+    
+    const isCommand = isRealCommand(message);
+    let actionResult = null;
+    
+    if (isCommand) {
+      const action = extractActionFromText(reply + ' ' + message);
+      if (action) {
+        console.log('⚡ اجرای اکشن:', action);
+        actionResult = executeAction(action);
+        console.log('📊 نتیجه:', actionResult);
+      }
+    }
+    
+    let finalMessage = reply;
+    finalMessage = finalMessage.replace(/ACTION:[^\s]*/g, '').trim();
+    
+    if (actionResult) {
+      if (actionResult.success) {
+        if (!reply.includes('✅') && !reply.includes('انجام')) {
+          finalMessage = actionResult.message;
+        }
+      } else {
+        finalMessage = actionResult.message;
+      }
+    }
+    
+    const colorCheck = checkInvalidColor(message);
+    if (colorCheck) {
+      finalMessage = colorCheck;
+    }
+    
+    finalMessage = finalMessage.replace(/ACTION:[^\s]*/g, '').trim();
+    
+    aiHistory.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+    aiHistory.push({ role: 'assistant', content: finalMessage, timestamp: new Date().toISOString() });
+    
+    res.json({ 
+      success: true, 
+      message: finalMessage,
+      actionResult: actionResult
+    });
+    
+  } catch (error) {
+    console.error('❌ Error:', error);
+    res.json({ 
+      success: false, 
+      message: `❌ خطا: ${error.message}` 
+    });
+  }
+});
+
+// ============================================================
+// ========== توابع کمکی ==========
+// ============================================================
+
+function isRealCommand(message) {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  
+  const questionWords = ['؟', '?', 'چطور', 'چگونه', 'چه', 'کی', 'کجا', 'چرا', 'آیا', 'ایا', 
+                         'is', 'what', 'how', 'why', 'when', 'where', 'can', 'could', 'would'];
+  for (const word of questionWords) {
+    if (lower.includes(word)) return false;
+  }
+  
+  const jokeWords = ['کصخله', 'کصخل', 'خنده', 'جک', 'جوک', 'شوخی', 'مزخرف', 'مسخره', 
+                     'funny', 'joke', 'laugh', 'stupid', 'dumb'];
+  for (const word of jokeWords) {
+    if (lower.includes(word)) return false;
+  }
+  
+  const commandWords = ['بساز', 'ساخت', 'create', 'make', 'حذف', 'delete', 'remove', 
+                        'پاک', 'تم', 'رنگ', 'theme', 'color', 'تاریک', 'روشن', 'dark', 'light',
+                        'لیست', 'list', 'نمایش', 'show', 'تمدید', 'extend', 'حجم', 'storage'];
+  for (const word of commandWords) {
+    if (lower.includes(word)) return true;
+  }
+  
+  if ((lower.includes('پنل') || lower.includes('کانفینگ') || lower.includes('کانفیگ')) && 
+      !lower.includes('؟') && !lower.includes('?')) {
+    return true;
+  }
+  
+  return false;
+}
+
+function checkInvalidColor(message) {
+  if (!message) return null;
+  const lower = message.toLowerCase();
+  
+  if (!lower.includes('رنگ') && !lower.includes('تم') && !lower.includes('color') && !lower.includes('theme')) {
+    return null;
+  }
+  
+  const invalidColors = ['طیفانی', 'طوسی', 'خاکستری', 'مشکی', 'طلایی', 'نقره ای', 'زرد', 'کرم', 'سفید', 
+                         'طيفانی', 'خاكستری', 'طلایی', 'نقره‌ای'];
+  
+  for (const word of invalidColors) {
+    if (lower.includes(word)) {
+      const colorList = '🔵 آبی\n🟣 بنفش\n🟢 سبز\n🌹 صورتی\n🟤 قهوه‌ای\n🔴 قرمز\n🟠 نارنجی\n🩵 فیروزه‌ای';
+      return `❌ رنگ "${word}" وجود ندارد. رنگ‌های موجود:\n${colorList}`;
+    }
+  }
+  return null;
+}
+
+function extractActionFromText(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  
+  // ===== ساخت پنل =====
+  if (lower.includes('ساخت') || lower.includes('create') || 
+      lower.includes('بساز') || lower.includes('make') ||
+      lower.includes('پنل') || lower.includes('کانفینگ')) {
+    
+    let name = 'پنل جدید';
+    const nameMatch = text.match(/["']([^"']*)["']/);
+    if (nameMatch && nameMatch[1]) name = nameMatch[1];
+    else {
+      const patterns = [
+        /پنل\s+["']?([^\s,،.]+)["']?/i,
+        /با\s+نام\s+["']?([^\s,،.]+)["']?/i,
+        /(?:ساخت|create|بساز|make)\s+["']?([^\s,،.]+)["']?/i
+      ];
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          name = match[1];
+          break;
+        }
+      }
+    }
+    name = name.replace(/[.,،!?]/g, '').trim();
+    if (!name || name.length < 1) name = 'پنل جدید';
+    
+    const daysMatch = text.match(/(\d+)\s*(?:days?|روز)/i);
+    const days = daysMatch ? parseInt(daysMatch[1]) : 30;
+    
+    const storageMatch = text.match(/(\d+)\s*(?:GB|گیگ|gig)/i);
+    const storage = storageMatch ? parseInt(storageMatch[1]) : 100;
+    
+    const usersMatch = text.match(/(\d+)\s*(?:users?|کاربر)/i);
+    const users = usersMatch ? parseInt(usersMatch[1]) : 10;
+    
+    // کشور
+    let country = 'germany';
+    let countryFlag = '🇩🇪';
+    let countryName = 'آلمان';
+    const countryMap = {
+      'آلمان': { key: 'germany', flag: '🇩🇪', name: 'آلمان' },
+      'ترکیه': { key: 'turkey', flag: '🇹🇷', name: 'ترکیه' },
+      'هلند': { key: 'netherlands', flag: '🇳🇱', name: 'هلند' },
+      'دانمارک': { key: 'denmark', flag: '🇩🇰', name: 'دانمارک' },
+      'امارات': { key: 'uae', flag: '🇦🇪', name: 'امارات' },
+      'ایران': { key: 'iran', flag: '🇮🇷', name: 'ایران' }
+    };
+    for (const [key, val] of Object.entries(countryMap)) {
+      if (lower.includes(key)) {
+        country = val.key;
+        countryFlag = val.flag;
+        countryName = val.name;
+        break;
+      }
+    }
+    
+    // اسلاگ رندوم
+    const slug = generateRandomSlug(4);
+    
+    return { 
+      type: 'create_panel', 
+      data: { name, days, storage, users, country, countryFlag, countryName, slug } 
+    };
+  }
+  
+  // ===== حذف همه =====
+  if (lower.includes('delete all') || lower.includes('حذف همه') || 
+      lower.includes('remove all') || lower.includes('همه پنل')) {
+    return { type: 'delete_all' };
+  }
+  
+  // ===== حذف پنل =====
+  if (lower.includes('delete') || lower.includes('حذف') || 
+      lower.includes('remove') || lower.includes('پاک کن')) {
+    
+    let name = null;
+    const quoteMatch = text.match(/["']([^"']*)["']/);
+    if (quoteMatch && quoteMatch[1]) name = quoteMatch[1];
+    
+    if (!name) {
+      const regex = /(?:delete|حذف|remove|پاک\s+کن)\s+(?:panel|پنل)?\s*["']?([^\s,،.]+)["']?/i;
+      const match = text.match(regex);
+      if (match && match[1]) name = match[1];
+    }
+    
+    if (name) {
+      name = name.replace(/[.,،!?]/g, '').trim();
+      return { type: 'delete_panel', data: { name } };
+    }
+  }
+  
+  // ===== تغییر تم =====
+  if (lower.includes('theme') || lower.includes('تم') || 
+      lower.includes('color') || lower.includes('رنگ')) {
+    for (const [color, keywords] of Object.entries(AVAILABLE_COLORS)) {
+      for (const kw of keywords) {
+        if (lower.includes(kw)) {
+          return { type: 'change_theme', data: { color } };
+        }
+      }
+    }
+  }
+  
+  // ===== تغییر حالت =====
+  if (lower.includes('dark') || lower.includes('تاریک')) {
+    return { type: 'change_mode', data: { mode: 'dark' } };
+  }
+  if (lower.includes('light') || lower.includes('روشن')) {
+    return { type: 'change_mode', data: { mode: 'light' } };
+  }
+  
+  // ===== لیست =====
+  if (lower.includes('list') || lower.includes('لیست') || 
+      lower.includes('show') || lower.includes('نمایش')) {
+    return { type: 'list_panels' };
+  }
+  
+  return null;
+}
+
+// ============================================================
+// ========== اجرای ACTION ==========
+// ============================================================
+
+function executeAction(action) {
+  if (!action) return { success: false, message: 'اکشن یافت نشد' };
+  
+  try {
+    switch(action.type) {
+      case 'create_panel': {
+        const { name, days, storage, users, country, countryFlag, countryName, slug } = action.data;
+        
+        const newPanel = {
+          id: Date.now(),
+          name: name,
+          slug: slug || generateRandomSlug(4),
+          days: days,
+          remainingDays: days,
+          storage: storage,
+          usedStorage: 0,
+          users: users,
+          countries: [country || 'germany'],
+          dns: ['10.202.10.10', '114.114.114.114'],
+          dnsService: 'radar',
+          dnsServiceName: 'رادار',
+          countryName: countryName || 'آلمان',
+          countryFlag: countryFlag || '🇩🇪',
+          status: 'active',
+          panelSettings: { color: 'blue', mode: 'light', showDns: true, showFlags: true, compact: false }
+        };
+        
+        panels.unshift(newPanel);
+        return { 
+          success: true, 
+          message: `✅ پنل "${name}" با ${days} روز، ${storage} گیگ و ${users} کاربر ساخته شد\n🔗 لینک: /${newPanel.slug}`,
+          panel: newPanel
+        };
+      }
+      
+      case 'delete_panel': {
+        const name = action.data.name;
+        const panel = panels.find(p => 
+          p.name.toLowerCase() === name.toLowerCase() ||
+          p.slug.toLowerCase() === name.toLowerCase() ||
+          p.name.toLowerCase().includes(name.toLowerCase())
+        );
+        if (panel) {
+          const panelName = panel.name;
+          panels = panels.filter(p => p.id !== panel.id);
+          return { success: true, message: `✅ پنل "${panelName}" با موفقیت حذف شد` };
+        }
+        return { success: false, message: `❌ پنل "${name}" یافت نشد` };
+      }
+      
+      case 'delete_all': {
+        const count = panels.length;
+        panels = [];
+        return { success: true, message: `✅ ${count} پنل با موفقیت حذف شدند` };
+      }
+      
+      case 'change_theme': {
+        const color = action.data.color;
+        panels.forEach(p => {
+          if (!p.panelSettings) p.panelSettings = {};
+          p.panelSettings.color = color;
+        });
+        return { success: true, message: `✅ تم همه پنل‌ها به "${color}" تغییر کرد` };
+      }
+      
+      case 'change_mode': {
+        const mode = action.data.mode;
+        const modeName = mode === 'dark' ? 'تاریک' : 'روشن';
+        panels.forEach(p => {
+          if (!p.panelSettings) p.panelSettings = {};
+          p.panelSettings.mode = mode;
+        });
+        return { success: true, message: `✅ حالت همه پنل‌ها به "${modeName}" تغییر کرد` };
+      }
+      
+      case 'list_panels': {
+        if (panels.length === 0) {
+          return { success: true, message: '📭 هیچ پنلی وجود ندارد' };
+        }
+        let list = '📋 لیست پنل‌ها:\n';
+        panels.forEach((p, i) => {
+          const status = p.status === 'active' ? '✅' : '❌';
+          list += `${i+1}. 📡 ${p.name} ${status} ${p.remainingDays} روز | ${p.storage}GB | /${p.slug}\n`;
+        });
+        return { success: true, message: list };
+      }
+      
+      default:
+        return { success: false, message: `❌ اکشن ناشناخته` };
+    }
+  } catch (error) {
+    return { success: false, message: `❌ خطا: ${error.message}` };
+  }
+}
+
+// ============================================================
+// ========== GENERATE PANEL PAGE ==========
 // ============================================================
 
 function generatePanelPage(panel) {
-  // ... (همون کد قبلی برای صفحه پنل)
-  // برای خلاصی، اینجا همون کد قبلی رو قرار بده
-  // یا می‌تونی از فایل قبلی استفاده کنی
-}
-
-app.get('/SUB/:slug', (req, res) => {
-  const slug = req.params.slug;
-  const panel = panels.find(p => p.slug === slug);
-  if (!panel) {
-    return res.status(404).send('پنل یافت نشد');
-  }
-  res.send(generatePanelPage(panel));
-});
-
-app.get('/:slug', (req, res) => {
-  const slug = req.params.slug;
-  const reserved = ['dashboard', 'settings', 'ai', 'api', 'login', 'favicon.ico', 'SUB', 'admin-panel'];
-  if (reserved.includes(slug)) {
-    return res.redirect('/' + slug);
-  }
-  const panel = panels.find(p => p.slug === slug);
-  if (panel) {
-    return res.redirect('/SUB/' + slug);
-  }
-  res.status(404).send('پنل یافت نشد');
-});
-
-// ========== START SERVER ==========
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📱 Login: http://localhost:${PORT}`);
-  console.log(`👑 Owner: ${OWNER_USERNAME}`);
-  console.log(`🔑 Owner Pass: ${OWNER_PASSWORD}`);
-  console.log(`👥 Admin Panel: http://localhost:${PORT}/admin-panel`);
-});
+  const isActive = panel.status === 'active';
+  const usedPercent = panel.storage > 0 ? Math.min(100, Math.round((panel.usedStorage || 0) / panel.storage * 100)) : 0;
+  const isFull = usedPercent >= 100;
+  const remain = Math.max(0, panel.storage - (panel.usedStorage || 0));
+  const color = panel.panelSettings?.color || 'blue';
+  const mode = panel.panelSettings?.mode || 'light';
+  
+  // رنگ‌ها
+  const colorMap = {
+    blue: { a: '#007bff', d: '#0056b3', p: '#e6f2ff' },
+    purple: { a: '#6f42c1', d: '#59359a', p: '#f0eaff' },
+    green: { a: '#198754', d: '#146c43', p: '#e6f7ed' },
+    rose: { a: '#d6335c', d: '#ad2748', p: '#ffe9ee' },
+    brown: { a: '#8B6914', d: '#6B4F12', p: '#f5efe6' },
+    red: { a: '#dc3545', d: '#b02a37', p: '#fce8ea' },
+    orange: { a: '#fd7e14', d: '#c9650f', p: '#fef0e0' },
+    teal: { a: '#20c997', d: '#1aa67e', p: '#e0f5f0' }
+  };
+  const c = colorMap[color] || colorMap.blue;
+  
+  // اگه حجم تموم شده، DNS خالی و قرمز
+  const showDns = !isFull;
+  const dnsItems = showDns ? (panel.dns || ['10.202.10.10', '114.114.114.114']).map((d, idx) => {
+    const label = idx === 0 ? '🟢 Primary' : '🟡 Secondary';
+    return `<div class="di">${label}: ${d} <button onclick="copyDNS('${d}')" style="background:none;border:0;color:var(--a);cursor:pointer;"><i class="fas fa-copy"></i></button></div>`;
+  }).join('') : '<div class="di" style="color:red;text-align:center;">⚠️ حجم پنل تکمیل شده است</div>';
+  
+  const flag = panel.countryFlag || '🇩🇪';
+  const countryName = panel.countryName || 'آلمان';
+  
+  return `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>${panel.name} - ${countryName}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    :root {
+      --p: ${c.p};
+      --a: ${isFull ? '#dc3545' : c.a};
+      --d: ${isFull ? '#b02a37' : c.d};
+      --bg: ${isFull ? 'linear-gradient(135deg,#fce8ea,#ffd6d6)' : 'linear-gradient(135deg,' + c.p + ',#f0f8ff)'};
+      --c: #fff;
+      --t: #333;
+      --t2: #666;
+      --b: ${isFull ? '#f5c6cb' : '#d1e7ff'};
+      --s: #28a745;
+      --warning: #ffc107;
+    }
+    [data-theme="dark"] {
+      --bg: ${isFull ? 'linear-gradient(135deg,#2d0a0a,#1a0a0a)' : 'linear-gradient(135deg,#0f172a,#1e293b)'};
+      --c: ${isFull ? '#2d0a0a' : '#1e293b'};
+      --t: #e2e8f0;
+      --t2: #94a3b8;
+      --b: ${isFull ? '#4a1a1a' : '#334155'};
+      --p: ${isFull ? '#3d0a0a' : '#1e3a5f'};
+      --a: ${isFull ? '#ef4444' : '#3b82f6'};
+    }
+    *{margin:0;padding:0;box-sizing:border-box;font-family:Vazirmatn,sans-serif}
+    body{background:var(--bg);min-height:100vh;padding:20px;color:var(--t);transition:0.3s}
+    .box{max-width:480px;margin:40px auto;background:var(--c);border-radius:24px;padding:32px;border:${isFull ? '2px solid #dc3545' : '1px solid var(--b)'};box-shadow:${isFull ? '0 8px 30px rgba(220,53,69,0.3)' : '0 8px 30px rgba(0,0,0,.1)'}}
+    .logo{width:70px;height:70px;margin:0 auto 16px;border-radius:18px;background:${isFull ? 'linear-gradient(135deg,#dc3545,#b02a37)' : 'linear-gradient(135deg,var(--a),var(--d))'};color:#fff;display:grid;place-items:center;font-size:28px}
+    h1{text-align:center;color:${isFull ? '#dc3545' : 'var(--a)'};font-size:22px;margin-bottom:4px}
+    .sub{text-align:center;color:var(--t2);font-size:12px;margin-bottom:20px}
+    .dns-info{text-align:center;font-size:11px;color:var(--t2);margin-bottom:16px;padding:8px;background:var(--p);border-radius:8px;}
+    .opts{display:flex;justify-content:center;gap:6px;margin-bottom:20px;flex-wrap:wrap}
+    .ob{padding:6px 12px;border-radius:8px;border:2px solid var(--b);background:var(--c);color:var(--t);cursor:pointer;font-size:11px;transition:0.2s}
+    .ob:hover{border-color:var(--a)}
+    .ob.a{border-color:var(--a);background:var(--p);color:var(--a);font-weight:600}
+    .ig{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+    .inf{background:var(--p);padding:12px;border-radius:10px;text-align:center;transition:0.2s}
+    .inf:hover{transform:translateY(-2px)}
+    .inf .l{font-size:10px;color:var(--t2)}
+    .inf .v{font-size:16px;font-weight:700;color:${isFull ? '#dc3545' : 'var(--a)'}}
+    .bw{margin-bottom:16px}
+    .bt{display:flex;justify-content:space-between;font-size:11px;color:var(--t2);margin-bottom:4px}
+    .br{height:8px;background:var(--b);border-radius:10px;overflow:hidden}
+    .br i{display:block;height:100%;background:${isFull ? 'linear-gradient(90deg,#dc3545,#ff6b6b)' : 'linear-gradient(90deg,var(--a),#66b3ff)'};transition:1s;width:${usedPercent}%}
+    .sec{margin-bottom:14px}
+    .sec h3{font-size:13px;color:${isFull ? '#dc3545' : 'var(--a)'};margin-bottom:8px;display:flex;align-items:center;gap:6px}
+    .di{background:var(--p);padding:10px 14px;border-radius:8px;margin-bottom:5px;font-family:monospace;font-size:13px;direction:ltr;text-align:left;display:flex;justify-content:space-between;align-items:center;${isFull ? 'color:#dc3545;border:1px solid #dc3545;' : ''}}
+    .tg{display:inline-block;background:var(--p);color:${isFull ? '#dc3545' : 'var(--a)'};padding:4px 10px;border-radius:6px;font-size:13px;margin:2px}
+    .st{text-align:center;margin-top:16px;padding:10px;border-radius:8px;font-size:12px;font-weight:600}
+    .st.on{background:rgba(40,167,69,.15);color:var(--s)}
+    .st.off{background:rgba(220,53,69,.15);color:#dc3545}
+    .st.full{background:rgba(220,53,69,.25);color:#dc3545;border:1px solid #dc3545}
+    .footer{text-align:center;margin-top:16px;font-size:10px;color:var(--t2)}
+    .copy-tip{text-align:center;font-size:11px;color:var(--t2);margin:8px 0;padding:6px;background:rgba(255,193,7,0.1);border-radius:6px;border:1px dashed var(--warning);}
+    .full-badge{display:inline-block;background:#dc3545;color:#fff;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600;margin-right:6px}
+  </style>
+</head>
+<body data-theme="${mode}">
+<div class="box">
+  <div class="logo"><i class="fas fa-server"></i></div>
+  <h1>${panel.name} ${isFull ? '<span class="full-badge">🔴 FULL</span>' : ''}</h1>
+  <p class="sub" id="sub"><i class="fas fa-globe"></i> ${flag} ${countryName} | <i class="fas fa-shield-alt"></i> پنل DNS اختصاصی</p>
+  <div class="dns-info">سرویس: ${panel.dnsServiceName || 'رادار'} | کشور: ${countryName}</div>
+  <div class="opts">
+    <button class="ob a" onclick="sl('fa')">فارسی</button>
+    <button class="ob" onclick="sl('en')">English</button>
+    <button class="ob" onclick="sl('ru')">Русский</button>
+    <button class="ob" onclick="sm('light')"><i class="fas fa-sun"></i></button>
+    <button class="ob" onclick="sm('dark')"><i class="fas fa-moon"></i></button>
+  </div>
+  <div class="ig">
+    <div class="inf"><div class="l" id="l1"><i class="far fa-calendar-alt"></i> روز باقی‌مانده</div><div class="v">${panel.remainingDays}</div></div>
+    <div class="inf"><div class="l" id="l2"><i class="fas fa-hdd"></i> حجم باقی‌مانده</div><div class="v">${isFull ? '0 GB' : remain + ' GB'}</div></div>
+    <div class="inf"><div class="l" id="l3"><i class="fas fa-database"></i> حجم کل</div><div class="v">${panel.storage} GB</div></div>
+    <div class="inf"><div class="l" id="l4"><i class="fas fa-users"></i> کاربران</div><div class="v">${panel.users}</div></div>
+  </div>
+  <div class="bw">
+    <div class="bt"><span id="l5"><i class="fas fa-chart-bar"></i> مصرف حجم</span><span>${isFull ? '🔴 FULL' : usedPercent + '%'}</span></div>
+    <div class="br"><i style="width:${usedPercent}%"></i></div>
+  </div>
+  <div class="sec">
+    <h3><i class="fas fa-server"></i> <span id="l6">آدرس‌های DNS</span></h3>
+    ${dnsItems}
+  </div>
+  <div class="copy-tip"><i class="fas fa-info-circle"></i> برای کپی روی آیکون 📋 کلیک کنید</div>
+  <div class="sec">
+    <h3><i class="fas fa-flag"></i> <span id="l7">کشور</span></h3>
+    <span class="tg">${flag} ${countryName}</span>
+  </div>
+  <div class="st ${isFull ? 'full' : (isActive ? 'on' : 'off')}" id="st">
+    ${isFull ? '<i class="fas fa-exclamation-triangle"></i> ● حجم تکمیل شده' : (isActive ? '<i class="fas fa-check-circle"></i> ● فعال' : '<i class="fas fa-times-circle"></i> ● غیرفعال')}
+  </div>
+  <div class="footer">تولید شده توسط پنل مدیریت DNS</div>
+</div>
+<script>
+var tr={fa:{s:"پنل DNS اختصاصی",a:["روز باقی‌مانده","حجم باقی‌مانده","حجم کل","کاربران","مصرف حجم","آدرس‌های DNS","کشور"],o:"فعال",f
